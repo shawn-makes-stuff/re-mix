@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>(re)Mix</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <!-- Google Material Symbols -->
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <!-- Left toolbar -->
+  <div id="leftToolbar">
+    <button id="menuButton" class="icon-btn small-icon" title="Menu">
+      <span class="material-symbols-outlined">menu</span>
+    </button>
+    <button id="undoButton" class="icon-btn small-icon" title="Undo">
+      <span class="material-symbols-outlined">undo</span>
+    </button>
+    <button id="deleteButton" class="icon-btn small-icon" title="Delete selected">
+      <span class="material-symbols-outlined">delete</span>
+    </button>
+    <button id="helpButton" class="icon-btn small-icon" title="Help">
+      <span class="material-symbols-outlined">help</span>
+    </button>
+    <button id="advancedModeButton" class="icon-btn small-icon" title="Advanced mode">
+      <span class="material-symbols-outlined">tune</span>
+    </button>
+  </div>
+
+  <!-- Bottom controls: basic vs advanced -->
+  <div id="bottomControls">
+    <!-- Basic controls -->
+    <div id="basicControls" class="controls-group">
+      <button id="rotateLeftBtn" class="icon-btn large" title="Rotate left">
+        <span class="material-symbols-outlined">arrow_back</span>
+      </button>
+      <button id="rotationModeBtn" class="icon-btn large" title="Rotation mode: World">
+        <span class="material-symbols-outlined" id="rotationModeIcon">public</span>
+      </button>
+      <button id="rotateRightBtn" class="icon-btn large" title="Rotate right">
+        <span class="material-symbols-outlined">arrow_forward</span>
+      </button>
+    </div>
+
+    <!-- Advanced transform tools -->
+    <div id="advancedControls" class="controls-group">
+      <button id="moveModeBtn" class="icon-btn large" title="Move (G)">
+        <span class="material-symbols-outlined">open_with</span>
+      </button>
+      <button id="rotateModeBtn" class="icon-btn large" title="Rotate (R)">
+        <span class="material-symbols-outlined">cached</span>
+      </button>
+      <button id="scaleModeBtn" class="icon-btn large" title="Scale (S)">
+        <span class="material-symbols-outlined">zoom_out_map</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <!-- Horizontal resize handle -->
+    <div id="sidebarResizeHandle"></div>
+
+    <div id="sidebarHeader">
+      <div class="toolbar-row">
+        <button id="importBtn" class="btn-primary btn-pill">Import Parts</button>
+        <button id="exportStlBtn" class="btn-pill">Export STL</button>
+      </div>
+      <div class="toolbar-row compact">
+        <span id="fileName">No file loaded</span>
+      </div>
+    </div>
+
+    <div id="partsList">
+      <div class="parts-header-row">
+        <span class="section-label">Parts</span>
+        <span>Drag or tap to add</span>
+      </div>
+      <!-- items injected here -->
+    </div>
+
+    <!-- Scene Objects panel (advanced mode only) -->
+    <div id="scenePanel" class="sidebar-panel">
+      <div id="sceneResizeHandle" class="panel-resize-handle"></div>
+      <div class="advanced-header">
+        <span class="section-label">Scene Objects</span>
+      </div>
+      <div id="sceneObjectsList" class="scene-objects-list">
+        <!-- rows injected here -->
+      </div>
+    </div>
+
+    <!-- Advanced panel (transform) (advanced mode only) -->
+    <div id="advancedPanel" class="sidebar-panel">
+      <div id="advancedResizeHandle" class="panel-resize-handle"></div>
+
+      <div class="advanced-header">
+        <span class="section-label">Transform</span>
+        <span id="advancedSelectionLabel" class="advanced-selection-label">No part selected</span>
+      </div>
+
+
+      <div class="advanced-grid">
+        <label class="advanced-field">
+          <span>Pos X</span>
+          <input id="posXInput" type="number" step="0.1">
+        </label>
+        <label class="advanced-field">
+          <span>Pos Y</span>
+          <input id="posYInput" type="number" step="0.1">
+        </label>
+        <label class="advanced-field">
+          <span>Pos Z</span>
+          <input id="posZInput" type="number" step="0.1">
+        </label>
+
+        <label class="advanced-field">
+          <span>Rot Y (°)</span>
+          <input id="rotYInput" type="number" step="5">
+        </label>
+        <label class="advanced-field">
+          <span>Scale X</span>
+          <input id="scaleXInput" type="number" step="0.1">
+        </label>
+        <label class="advanced-field">
+          <span>Scale Y</span>
+          <input id="scaleYInput" type="number" step="0.1">
+        </label>
+        <label class="advanced-field">
+          <span>Scale Z</span>
+          <input id="scaleZInput" type="number" step="0.1">
+        </label>
+      </div>
+
+      <div class="advanced-subtitle">Snapping</div>
+      <div class="advanced-grid snap-grid">
+        <label class="advanced-field">
+          <span>Move (units)</span>
+          <input id="snapTranslateInput" type="number" step="0.1" placeholder="e.g. 1">
+        </label>
+        <label class="advanced-field">
+          <span>Rotate (°)</span>
+          <input id="snapRotateInput" type="number" step="5" placeholder="e.g. 30">
+        </label>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Help overlay -->
+  <div id="helpOverlay">
+    <div id="helpPanel">
+      <div class="help-header">
+        <h2>Help & Controls</h2>
+        <button id="helpCloseBtn" aria-label="Close help">✕</button>
+      </div>
+      <div class="help-content">
+        <div class="help-section-title">Mouse</div>
+        <div class="help-grid">
+          <div class="help-key">LMB</div>
+          <div class="help-desc">Rotate camera (drag)</div>
+          <div class="help-key">RMB</div>
+          <div class="help-desc">Pan camera</div>
+          <div class="help-key">Wheel</div>
+          <div class="help-desc">Zoom in / out</div>
+        </div>
+
+        <div class="help-section-title">Selection & Parts</div>
+        <div class="help-grid">
+          <div class="help-key">Click (viewport)</div>
+          <div class="help-desc">Select a single part in the scene</div>
+          <div class="help-key">Shift+Click</div>
+          <div class="help-desc">Add/remove from selection</div>
+        </div>
+
+        <div class="help-section-title">Modes</div>
+        <div class="help-grid">
+          <div class="help-key">
+            <span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">tune</span>
+          </div>
+          <div class="help-desc">
+            Toggle Advanced editing mode
+          </div>
+          <div class="help-key">
+            Globe / Target
+          </div>
+          <div class="help-desc">
+            In basic mode, switch rotation between world origin and part center
+          </div>
+        </div>
+
+        <div class="help-section-title">Transform (basic)</div>
+        <div class="help-grid">
+          <div class="help-key">Q</div>
+          <div class="help-desc">Rotate selected 90° left (around origin)</div>
+          <div class="help-key">E</div>
+          <div class="help-desc">Rotate selected 90° right (around origin)</div>
+          <div class="help-key">Shift+Q</div>
+          <div class="help-desc">Rotate selected 90° left (around part center)</div>
+          <div class="help-key">Shift+E</div>
+          <div class="help-desc">Rotate selected 90° right (around part center)</div>
+          <div class="help-key">Bottom arrows</div>
+          <div class="help-desc">Rotate selected left/right (basic mode)</div>
+        </div>
+
+        <div class="help-section-title">Transform (advanced)</div>
+        <div class="help-grid">
+          <div class="help-key">G</div>
+          <div class="help-desc">Move (translate) selected part with gizmo</div>
+          <div class="help-key">R</div>
+          <div class="help-desc">Rotate selected with gizmo</div>
+          <div class="help-key">S</div>
+          <div class="help-desc">Scale selected part with gizmo</div>
+        </div>
+
+        <div class="help-section-title">Editing</div>
+        <div class="help-grid">
+          <div class="help-key">Del / Backspace</div>
+          <div class="help-desc">Delete selected parts</div>
+          <div class="help-key">Ctrl+Z</div>
+          <div class="help-desc">Undo</div>
+          <div class="help-key">Ctrl+Y</div>
+          <div class="help-desc">Redo</div>
+        </div>
+
+        <div class="help-section-title">View</div>
+        <div class="help-grid">
+          <div class="help-key">H / Home</div>
+          <div class="help-desc">Re-center view on layout</div>
+        </div>
+
+        <div class="help-section-title">Files</div>
+        <div class="help-grid">
+          <div class="help-key">Import Parts</div>
+          <div class="help-desc">Load a multi-part FBX library</div>
+          <div class="help-key">Export STL</div>
+          <div class="help-desc">Export the current layout as STL</div>
+        </div>
+      </div>
+
+    </div>
+    </div>
+  </div>
+
+  <!-- Main view -->
+  <div id="viewer"></div>
+  <input type="file" id="fileInput" accept=".fbx" style="display:none" />
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js"
+    }
+  }
+  </script>
+
+  <script type="module" src="javascript.js"></script>
+</body>
+
+</html>
