@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js';
 import { FBXLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/FBXLoader.js';
 import { STLExporter } from 'https://unpkg.com/three@0.165.0/examples/jsm/exporters/STLExporter.js';
-import { TransformControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/TransformControls.js';
 
 /* -------------------------------------------------------------------------- */
 /* DOM REFS                                                                    */
@@ -18,13 +17,30 @@ const helpButton = document.getElementById('helpButton');
 const advancedModeButton = document.getElementById('advancedModeButton');
 
 const bottomControls = document.getElementById('bottomControls');
-const basicControls = document.getElementById('basicControls');
-const advancedControls = document.getElementById('advancedControls');
-
 const rotateLeftBtn = document.getElementById('rotateLeftBtn');
 const rotateRightBtn = document.getElementById('rotateRightBtn');
-const rotationModeBtn = document.getElementById('rotationModeBtn');
-const rotationModeIcon = document.getElementById('rotationModeIcon');
+const gridSnapToggle = document.getElementById('gridSnapToggle');
+const posXSlider = document.getElementById('posXSlider');
+const posYSlider = document.getElementById('posYSlider');
+const posZSlider = document.getElementById('posZSlider');
+const rotYSlider = document.getElementById('rotYSlider');
+const posXValue = document.getElementById('posXValue');
+const posYValue = document.getElementById('posYValue');
+const posZValue = document.getElementById('posZValue');
+const rotYValue = document.getElementById('rotYValue');
+
+posXSlider.min = posZSlider.min = (-POSITION_RANGE).toString();
+posXSlider.max = posZSlider.max = POSITION_RANGE.toString();
+posXSlider.step = posZSlider.step = '0.5';
+
+posYSlider.min = '0';
+posYSlider.max = HEIGHT_RANGE.toString();
+posYSlider.step = '0.5';
+
+rotYSlider.min = '0';
+rotYSlider.max = '360';
+rotYSlider.step = '0.5';
+gridSnapToggle.checked = gridSnapEnabled;
 
 const helpOverlay = document.getElementById('helpOverlay');
 const helpCloseBtn = document.getElementById('helpCloseBtn');
@@ -51,13 +67,6 @@ const scaleXInput = document.getElementById('scaleXInput');
 const scaleYInput = document.getElementById('scaleYInput');
 const scaleZInput = document.getElementById('scaleZInput');
 
-const snapTranslateInput = document.getElementById('snapTranslateInput');
-const snapRotateInput = document.getElementById('snapRotateInput');
-
-const moveModeBtn = document.getElementById('moveModeBtn');
-const rotateModeBtn = document.getElementById('rotateModeBtn');
-const scaleModeBtn = document.getElementById('scaleModeBtn');
-
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
 const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -66,8 +75,12 @@ const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 /* STATE                                                                       */
 /* -------------------------------------------------------------------------- */
 
-let rotateAroundWorld = true;
 let isAdvancedMode = false;
+let gridSnapEnabled = true;
+
+const GRID_SIZE = 25; // millimeters per tile
+const POSITION_RANGE = GRID_SIZE * 20; // +/- 20 tiles
+const HEIGHT_RANGE = GRID_SIZE * 8;
 
 const partLibrary = []; // { name, geometry, category }
 const placedPartsGroup = new THREE.Group();
@@ -142,29 +155,7 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.1;
 controls.target.set(0, 0, 0);
 
-// Transform controls
-const transformControls = new TransformControls(camera, renderer.domElement);
-scene.add(transformControls);
-let isTransforming = false;
-let hadTransformDrag = false;   // 👈 did this pointer interaction actually drag the gizmo?
-let pointerDownPos = null;  
-
-transformControls.addEventListener('dragging-changed', (e) => {
-  controls.enabled = !e.value;
-  if (e.value) {
-    isTransforming = true;
-    hadTransformDrag = true;   // gizmo drag actually started
-  } else {
-    if (isTransforming) {
-      pushHistory();           // commit final transform once per drag
-    }
-    isTransforming = false;
-  }
-});
-
-transformControls.addEventListener('objectChange', () => {
-  if (isAdvancedMode) syncAdvancedPanelFromSelection();
-});
+let pointerDownPos = null;
 
 // Lights
 const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
@@ -180,10 +171,11 @@ dirLight2.position.set(-5, 8, -5);
 scene.add(dirLight2);
 
 // Floor
+const gridWorldSize = GRID_SIZE * 40;
 const floor = new THREE.Mesh(
-  new THREE.CircleGeometry(2.5, 32),
+  new THREE.PlaneGeometry(gridWorldSize, gridWorldSize),
   new THREE.MeshStandardMaterial({
-    color: 0x222222,
+    color: 0x1a1a1a,
     roughness: 1.0,
     metalness: 0.0,
     side: THREE.DoubleSide
@@ -192,6 +184,22 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = 0;
 scene.add(floor);
+
+const gridHelper = new THREE.GridHelper(
+  gridWorldSize,
+  gridWorldSize / GRID_SIZE,
+  0x3f3f3f,
+  0x2b2b2b
+);
+const gridMaterials = Array.isArray(gridHelper.material)
+  ? gridHelper.material
+  : [gridHelper.material];
+gridMaterials.forEach((mat) => {
+  mat.transparent = true;
+  mat.opacity = 0.4;
+});
+gridHelper.position.y = 0.002;
+scene.add(gridHelper);
 
 // Shared materials
 const normalMaterial = new THREE.MeshStandardMaterial({
@@ -220,9 +228,13 @@ function setMeshHighlight(mesh, isSelected) {
 
 function updateBottomControlsVisibility() {
   const hasSelection = selectedMeshes.size > 0;
-  basicControls.style.display = (!isAdvancedMode && hasSelection) ? 'flex' : 'none';
-  advancedControls.style.display = (isAdvancedMode && hasSelection) ? 'flex' : 'none';
   bottomControls.style.display = hasSelection ? 'flex' : 'none';
+  if (!hasSelection) {
+    posXValue.textContent = '--';
+    posYValue.textContent = '--';
+    posZValue.textContent = '--';
+    rotYValue.textContent = '--';
+  }
 
   // Update rows highlight in scene objects list
   if (sceneObjectsList) {
@@ -233,6 +245,8 @@ function updateBottomControlsVisibility() {
       row.classList.toggle('selected', isSelected);
     });
   }
+
+  syncMovementControlsFromSelection();
 }
 
 function centerMeshPivot(mesh) {
@@ -248,23 +262,10 @@ function centerMeshPivot(mesh) {
   mesh.userData.pivotCentered = true;
 }
 
-/** keep gizmo centered on its mesh when attaching */
-function updateTransformControls() {
-  if (!isAdvancedMode || selectedMeshes.size !== 1) {
-    transformControls.detach();
-    return;
-  }
-  const mesh = [...selectedMeshes][0];
-  centerMeshPivot(mesh);
-  transformControls.attach(mesh);
-  scene.add(transformControls);
-}
-
 function clearSelection() {
   selectedMeshes.forEach((mesh) => setMeshHighlight(mesh, false));
   selectedMeshes.clear();
   updateBottomControlsVisibility();
-  updateTransformControls();
   syncAdvancedPanelFromSelection();
 }
 
@@ -290,9 +291,137 @@ function handleMeshClick(mesh, shiftKey) {
   }
 
   updateBottomControlsVisibility();
-  updateTransformControls();
   syncAdvancedPanelFromSelection();
 }
+
+function snapToGrid(value) {
+  return Math.round(value / GRID_SIZE) * GRID_SIZE;
+}
+
+function applyGridSnap(mesh) {
+  if (!mesh) return;
+  mesh.position.x = snapToGrid(mesh.position.x);
+  mesh.position.z = snapToGrid(mesh.position.z);
+}
+
+function formatMillimeters(value) {
+  return `${value.toFixed(1)} mm`;
+}
+
+function normalizeDegrees(rad) {
+  const deg = THREE.MathUtils.radToDeg(rad);
+  return ((deg % 360) + 360) % 360;
+}
+
+function ensureSliderBounds(slider, value) {
+  if (!slider) return;
+  const padding = GRID_SIZE * 2;
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) return;
+  if (numericValue < Number(slider.min)) {
+    slider.min = Math.floor(numericValue - padding).toString();
+  }
+  if (numericValue > Number(slider.max)) {
+    slider.max = Math.ceil(numericValue + padding).toString();
+  }
+}
+
+function updateMovementLabels(mesh) {
+  if (!mesh) return;
+  posXValue.textContent = formatMillimeters(mesh.position.x);
+  posYValue.textContent = formatMillimeters(mesh.position.y);
+  posZValue.textContent = formatMillimeters(mesh.position.z);
+  rotYValue.textContent = `${normalizeDegrees(mesh.rotation.y).toFixed(1)}°`;
+}
+
+function syncMovementControlsFromSelection() {
+  const hasSingle = selectedMeshes.size === 1;
+  const sliders = [posXSlider, posYSlider, posZSlider, rotYSlider];
+  sliders.forEach((slider) => {
+    slider.disabled = !hasSingle;
+  });
+
+  if (!hasSingle) {
+    posXValue.textContent = '--';
+    posYValue.textContent = '--';
+    posZValue.textContent = '--';
+    rotYValue.textContent = '--';
+    return;
+  }
+
+  const mesh = [...selectedMeshes][0];
+  ensureSliderBounds(posXSlider, mesh.position.x);
+  ensureSliderBounds(posYSlider, mesh.position.y);
+  ensureSliderBounds(posZSlider, mesh.position.z);
+
+  posXSlider.value = mesh.position.x.toFixed(1);
+  posYSlider.value = mesh.position.y.toFixed(1);
+  posZSlider.value = mesh.position.z.toFixed(1);
+
+  const deg = normalizeDegrees(mesh.rotation.y);
+  rotYSlider.value = deg.toFixed(1);
+
+  updateMovementLabels(mesh);
+}
+
+function applyMovementFromSliders(commitHistory) {
+  if (selectedMeshes.size !== 1) return;
+  const mesh = [...selectedMeshes][0];
+
+  const px = parseFloat(posXSlider.value);
+  const py = parseFloat(posYSlider.value);
+  const pz = parseFloat(posZSlider.value);
+  const ry = parseFloat(rotYSlider.value);
+
+  if (!Number.isNaN(px)) mesh.position.x = px;
+  if (!Number.isNaN(py)) mesh.position.y = py;
+  if (!Number.isNaN(pz)) mesh.position.z = pz;
+
+  if (!Number.isNaN(ry)) {
+    centerMeshPivot(mesh);
+    mesh.rotation.y = THREE.MathUtils.degToRad(ry);
+  }
+
+  if (gridSnapEnabled) {
+    applyGridSnap(mesh);
+  }
+
+  ensureSliderBounds(posXSlider, mesh.position.x);
+  ensureSliderBounds(posYSlider, mesh.position.y);
+  ensureSliderBounds(posZSlider, mesh.position.z);
+
+  posXSlider.value = mesh.position.x.toFixed(1);
+  posYSlider.value = mesh.position.y.toFixed(1);
+  posZSlider.value = mesh.position.z.toFixed(1);
+  rotYSlider.value = normalizeDegrees(mesh.rotation.y).toFixed(1);
+
+  updateMovementLabels(mesh);
+  updateSceneObjectsList();
+  syncAdvancedPanelFromSelection();
+
+  if (commitHistory) pushHistory();
+}
+
+const movementSliders = [posXSlider, posYSlider, posZSlider, rotYSlider];
+movementSliders.forEach((slider) => {
+  slider.addEventListener('input', () => applyMovementFromSliders(false));
+  slider.addEventListener('change', () => applyMovementFromSliders(true));
+});
+
+gridSnapToggle.addEventListener('change', () => {
+  gridSnapEnabled = gridSnapToggle.checked;
+  if (!gridSnapEnabled) return;
+
+  if (selectedMeshes.size > 0) {
+    selectedMeshes.forEach((mesh) => {
+      applyGridSnap(mesh);
+    });
+    syncMovementControlsFromSelection();
+    syncAdvancedPanelFromSelection();
+    updateSceneObjectsList();
+    pushHistory();
+  }
+});
 
 /* -------------------------------------------------------------------------- */
 /* HISTORY                                                                     */
@@ -553,7 +682,6 @@ function updatePartsListUI() {
           selectedMeshes.add(mesh);
           setMeshHighlight(mesh, true);
           updateBottomControlsVisibility();
-          updateTransformControls();
           syncAdvancedPanelFromSelection();
           pushHistory();
         }
@@ -766,7 +894,6 @@ renderer.domElement.addEventListener('drop', (e) => {
   selectedMeshes.add(mesh);
   setMeshHighlight(mesh, true);
   updateBottomControlsVisibility();
-  updateTransformControls();
   syncAdvancedPanelFromSelection();
   pushHistory();
 });
@@ -792,6 +919,10 @@ function addPartInstance(partIndex) {
 
   mesh.castShadow = mesh.receiveShadow = true;
   placedPartsGroup.add(mesh);
+
+  if (gridSnapEnabled) {
+    applyGridSnap(mesh);
+  }
 
   if (isFirst) {
     frameScene(false);
@@ -892,7 +1023,6 @@ sceneObjectsList.addEventListener('click', (e) => {
     selectedMeshes.add(mesh);
     setMeshHighlight(mesh, true);
     updateBottomControlsVisibility();
-    updateTransformControls();
     syncAdvancedPanelFromSelection();
   }
 });
@@ -907,7 +1037,6 @@ function deleteMeshInstance(mesh) {
 
   if (wasSelected) {
     updateBottomControlsVisibility();
-    updateTransformControls();
     syncAdvancedPanelFromSelection();
   }
 
@@ -938,19 +1067,15 @@ function duplicateMeshInstance(mesh) {
 
   updateSceneObjectsList();
   updateBottomControlsVisibility();
-  updateTransformControls();
   syncAdvancedPanelFromSelection();
   pushHistory();
 }
 
 /* -------------------------------------------------------------------------- */
-/* RAYCAST SELECTION (HONOR TRANSFORM GIZMO FIRST)                             */
+/* RAYCAST SELECTION                                                           */
 /* -------------------------------------------------------------------------- */
 
 // --- Selection click in scene ---
-/* -------------------------------------------------------------------------- */
-/* RAYCAST SELECTION (GIZMO-FRIENDLY)                                         */
-/* -------------------------------------------------------------------------- */
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -973,13 +1098,6 @@ function onCanvasPointerUp(event) {
 
   // Left button only
   if (event.button !== 0) return;
-
-  // If a gizmo drag happened during this interaction, don't change selection
-  if (isAdvancedMode && hadTransformDrag) {
-    hadTransformDrag = false;
-    return;
-  }
-  hadTransformDrag = false;
 
   // Normal selection raycast
   const rect = renderer.domElement.getBoundingClientRect();
@@ -1006,66 +1124,35 @@ renderer.domElement.addEventListener('pointerup', onCanvasPointerUp);
 /* BASIC ROTATION / DELETE                                                     */
 /* -------------------------------------------------------------------------- */
 
-function rotateSelectedPart(deltaSteps) {
+function adjustSelectionRotation(deltaDegrees, commitHistory = true) {
   if (selectedMeshes.size === 0) return;
 
-  const angle = deltaSteps * (Math.PI / 2);
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
+  if (selectedMeshes.size === 1) {
+    const current = parseFloat(rotYSlider.value) || 0;
+    rotYSlider.value = (current + deltaDegrees).toFixed(1);
+    applyMovementFromSliders(commitHistory);
+    return;
+  }
 
-  selectedMeshes.forEach((mesh) => {
-    const p = mesh.position;
-    const x = p.x;
-    const z = p.z;
-
-    p.x = x * cos - z * sin;
-    p.z = x * sin + z * cos;
-    mesh.rotation.y += angle;
-
-    const steps = (mesh.userData.rotationSteps ?? 0) + deltaSteps;
-    mesh.userData.rotationSteps = ((steps % 4) + 4) % 4;
-  });
-
-  pushHistory();
-}
-
-function rotateSelectedPartAroundCenter(deltaSteps) {
-  if (selectedMeshes.size === 0) return;
-
-  const angle = deltaSteps * (Math.PI / 2);
-
+  const deltaRad = THREE.MathUtils.degToRad(deltaDegrees);
   selectedMeshes.forEach((mesh) => {
     centerMeshPivot(mesh);
-    mesh.rotation.y += angle;
-
-    const steps = (mesh.userData.rotationSteps ?? 0) + deltaSteps;
-    mesh.userData.rotationSteps = ((steps % 4) + 4) % 4;
+    mesh.rotation.y += deltaRad;
+    if (gridSnapEnabled) {
+      applyGridSnap(mesh);
+    }
   });
 
-  pushHistory();
+  updateSceneObjectsList();
+  if (commitHistory) pushHistory();
 }
 
-rotationModeBtn.addEventListener('click', () => {
-  rotateAroundWorld = !rotateAroundWorld;
-  rotationModeBtn.classList.toggle('active', !rotateAroundWorld);
-
-  if (rotateAroundWorld) {
-    rotationModeBtn.title = 'Rotation mode: World';
-    rotationModeIcon.textContent = 'public';
-  } else {
-    rotationModeBtn.title = 'Rotation mode: Center';
-    rotationModeIcon.textContent = 'trip_origin';
-  }
-});
-
 rotateLeftBtn.addEventListener('click', () => {
-  if (rotateAroundWorld) rotateSelectedPart(-1);
-  else rotateSelectedPartAroundCenter(-1);
+  adjustSelectionRotation(-90, true);
 });
 
 rotateRightBtn.addEventListener('click', () => {
-  if (rotateAroundWorld) rotateSelectedPart(1);
-  else rotateSelectedPartAroundCenter(1);
+  adjustSelectionRotation(90, true);
 });
 
 function deleteSelected() {
@@ -1096,13 +1183,8 @@ function setAdvancedMode(on) {
   // Hide trash icon in advanced mode (we have per-object delete there)
   deleteButton.style.display = on ? 'none' : '';
 
-  if (!on) {
-    transformControls.detach();
-  }
   updateBottomControlsVisibility();
-  updateTransformControls();
   syncAdvancedPanelFromSelection();
-  if (on) setTransformMode('translate');
 }
 
 advancedModeButton.addEventListener('click', () => {
@@ -1170,7 +1252,12 @@ function applyAdvancedInputs() {
   if (!Number.isNaN(sy)) mesh.scale.y = sy;
   if (!Number.isNaN(sz)) mesh.scale.z = sz;
 
+  if (gridSnapEnabled) {
+    applyGridSnap(mesh);
+  }
+
   updateSceneObjectsList();
+  syncMovementControlsFromSelection();
   pushHistory();
 }
 
@@ -1181,32 +1268,6 @@ function applyAdvancedInputs() {
 ].forEach((input) => {
   input.addEventListener('change', applyAdvancedInputs);
 });
-
-function updateTransformSnapping() {
-  const t = parseFloat(snapTranslateInput.value);
-  transformControls.setTranslationSnap(!Number.isNaN(t) && t > 0 ? t : null);
-
-  const r = parseFloat(snapRotateInput.value);
-  transformControls.setRotationSnap(
-    !Number.isNaN(r) && r > 0 ? THREE.MathUtils.degToRad(r) : null
-  );
-}
-
-snapTranslateInput.addEventListener('change', updateTransformSnapping);
-snapRotateInput.addEventListener('change', updateTransformSnapping);
-
-function setTransformMode(mode) {
-  if (!isAdvancedMode) return;
-
-  transformControls.setMode(mode);
-  moveModeBtn.classList.toggle('active', mode === 'translate');
-  rotateModeBtn.classList.toggle('active', mode === 'rotate');
-  scaleModeBtn.classList.toggle('active', mode === 'scale');
-}
-
-moveModeBtn.addEventListener('click', () => setTransformMode('translate'));
-rotateModeBtn.addEventListener('click', () => setTransformMode('rotate'));
-scaleModeBtn.addEventListener('click', () => setTransformMode('scale'));
 
 /* -------------------------------------------------------------------------- */
 /* KEYBOARD SHORTCUTS                                                          */
@@ -1230,21 +1291,13 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (e.key === 'q' || e.key === 'Q') {
-    if (e.shiftKey) rotateSelectedPartAroundCenter(-1);
-    else rotateSelectedPart(-1);
+    adjustSelectionRotation(e.shiftKey ? -15 : -90, true);
   } else if (e.key === 'e' || e.key === 'E') {
-    if (e.shiftKey) rotateSelectedPartAroundCenter(1);
-    else rotateSelectedPart(1);
+    adjustSelectionRotation(e.shiftKey ? 15 : 90, true);
   } else if (e.key === 'h' || e.key === 'H' || e.code === 'Home') {
     frameScene(false);
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     deleteSelected();
-  }
-
-  if (isAdvancedMode) {
-    if (e.key === 'g' || e.key === 'G') setTransformMode('translate');
-    else if (e.key === 'r' || e.key === 'R') setTransformMode('rotate');
-    else if (e.key === 's' || e.key === 'S') setTransformMode('scale');
   }
 });
 
