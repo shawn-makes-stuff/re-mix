@@ -29,6 +29,25 @@ const posYValue = document.getElementById('posYValue');
 const posZValue = document.getElementById('posZValue');
 const rotYValue = document.getElementById('rotYValue');
 
+/* -------------------------------------------------------------------------- */
+/* STATE                                                                       */
+/* -------------------------------------------------------------------------- */
+
+const GRID_SIZE = 25; // millimeters per tile
+const POSITION_RANGE = GRID_SIZE * 20; // +/- 20 tiles
+const HEIGHT_RANGE = GRID_SIZE * 8;
+
+let isAdvancedMode = false;
+let gridSnapEnabled = true;
+
+const partLibrary = []; // { name, geometry, category }
+const placedPartsGroup = new THREE.Group();
+const selectedMeshes = new Set();
+
+let history = [];
+let historyIndex = -1;
+let nextInstanceId = 1;
+
 posXSlider.min = posZSlider.min = (-POSITION_RANGE).toString();
 posXSlider.max = posZSlider.max = POSITION_RANGE.toString();
 posXSlider.step = posZSlider.step = '0.5';
@@ -70,25 +89,6 @@ const scaleZInput = document.getElementById('scaleZInput');
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
 const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-
-/* -------------------------------------------------------------------------- */
-/* STATE                                                                       */
-/* -------------------------------------------------------------------------- */
-
-let isAdvancedMode = false;
-let gridSnapEnabled = true;
-
-const GRID_SIZE = 25; // millimeters per tile
-const POSITION_RANGE = GRID_SIZE * 20; // +/- 20 tiles
-const HEIGHT_RANGE = GRID_SIZE * 8;
-
-const partLibrary = []; // { name, geometry, category }
-const placedPartsGroup = new THREE.Group();
-const selectedMeshes = new Set();
-
-let history = [];
-let historyIndex = -1;
-let nextInstanceId = 1;
 
 const loader = new FBXLoader();
 const exporter = new STLExporter();
