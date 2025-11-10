@@ -360,6 +360,19 @@ function updateBottomControlsVisibility() {
   if (rotateModeBtn) rotateModeBtn.disabled = !hasSelection;
   if (scaleModeBtn) scaleModeBtn.disabled = !hasSelection;
 
+  if (moveModeBtn && rotateModeBtn && scaleModeBtn) {
+    if (!hasSelection) {
+      moveModeBtn.classList.remove('active');
+      rotateModeBtn.classList.remove('active');
+      scaleModeBtn.classList.remove('active');
+    } else {
+      const activeMode = transformControls.getMode();
+      moveModeBtn.classList.toggle('active', activeMode === 'translate');
+      rotateModeBtn.classList.toggle('active', activeMode === 'rotate');
+      scaleModeBtn.classList.toggle('active', activeMode === 'scale');
+    }
+  }
+
   updateGridSnapButton();
 
   // Update rows highlight in scene objects list
