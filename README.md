@@ -3,7 +3,6 @@
 **(re)Mix** is a browser-based 3D scene builder built with **Three.js**.  
 It lets you import a multi-part `.fbx` file, drag and drop individual meshes into a scene, adjust their position, rotation, and scale, then export everything as an `.stl` file — all directly in your web browser.
 
----
 
 ## 🚀 Features
 - Import `.fbx` files with multiple meshes.
@@ -14,7 +13,6 @@ It lets you import a multi-part `.fbx` file, drag and drop individual meshes int
 - Undo/Redo history for all changes.
 - Export the entire layout as `.stl` for 3D printing.
 
----
 
 ## 🧱 FBX Setup
 Use naming conventions like:
@@ -33,7 +31,6 @@ Props__Torch
 
 Export from Blender or Nomad Sculpt with object names set like above.
 
----
 
 ## 🕹️ Controls
 
@@ -61,7 +58,6 @@ Export from Blender or Nomad Sculpt with object names set like above.
 | Rotate | R |
 | Scale | S |
 
----
 
 ## ⚙️ Setup
 1. Clone or download the repo.
@@ -72,7 +68,8 @@ Export from Blender or Nomad Sculpt with object names set like above.
 3. Open [http://localhost:8000](http://localhost:8000)
 4. Click **Import Parts** and load your `.fbx` file.
 
----
+Or just use the github pages version :)
+https://shawn-makes-stuff.github.io/re-mix/
 
 ## 📄 License
 MIT License — free to use, modify, and share.
