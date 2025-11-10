@@ -1403,8 +1403,8 @@ rotationModeBtn.addEventListener('click', () => {
     rotationModeBtn.title = 'Rotation mode: World';
     rotationModeIcon.textContent = 'public';
   } else {
-    rotationModeBtn.title = 'Rotation mode: Center';
-    rotationModeIcon.textContent = 'trip_origin';
+    rotationModeBtn.title = 'Rotation mode: Object';
+    rotationModeIcon.textContent = 'view_in_ar';
   }
 });
 
