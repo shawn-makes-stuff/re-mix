@@ -13,13 +13,17 @@ const sidebar = document.getElementById('sidebar');
 
 const menuButton = document.getElementById('menuButton');
 const undoButton = document.getElementById('undoButton');
-const deleteButton = document.getElementById('deleteButton');
 const helpButton = document.getElementById('helpButton');
 const advancedModeButton = document.getElementById('advancedModeButton');
 
 const bottomControls = document.getElementById('bottomControls');
 const basicControls = document.getElementById('basicControls');
 const advancedControls = document.getElementById('advancedControls');
+const gridControls = document.getElementById('gridControls');
+const gridSnapBtn = document.getElementById('gridSnapBtn');
+const gridSnapIcon = gridSnapBtn
+  ? gridSnapBtn.querySelector('.material-symbols-outlined')
+  : null;
 
 const rotateLeftBtn = document.getElementById('rotateLeftBtn');
 const rotateRightBtn = document.getElementById('rotateRightBtn');
@@ -69,6 +73,17 @@ const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 let rotateAroundWorld = true;
 let isAdvancedMode = false;
 
+const GRID_SIZE = 25; // millimeters per tile
+const GRID_WORLD_SIZE = GRID_SIZE * 40; // generous play area
+let gridSnapEnabled = false;
+let advancedGridSnapEnabled = true;
+let translationSnapValue = GRID_SIZE;
+let lastValidTranslationSnap = GRID_SIZE;
+
+if (snapTranslateInput) {
+  snapTranslateInput.value = GRID_SIZE.toString();
+}
+
 const partLibrary = []; // { name, geometry, category }
 const placedPartsGroup = new THREE.Group();
 const selectedMeshes = new Set();
@@ -79,6 +94,23 @@ let nextInstanceId = 1;
 
 const loader = new FBXLoader();
 const exporter = new STLExporter();
+
+const dragPreviewMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  opacity: 0.35,
+  transparent: true,
+  depthTest: false,
+  depthWrite: false,
+  wireframe: true
+});
+const previewRaycaster = new THREE.Raycaster();
+const previewPointer = new THREE.Vector2();
+const dropPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const dropIntersection = new THREE.Vector3();
+const pendingDropPosition = new THREE.Vector3();
+let hasPendingDropPosition = false;
+let dragPreviewMesh = null;
+let dragPreviewPartIndex = null;
 
 /* -------------------------------------------------------------------------- */
 /* SIDEBAR & HELP                                                              */
@@ -156,6 +188,11 @@ transformControls.addEventListener('dragging-changed', (e) => {
     hadTransformDrag = true;   // gizmo drag actually started
   } else {
     if (isTransforming) {
+      if (gridSnapEnabled) {
+        applyGridSnapToSelection();
+      }
+      syncAdvancedPanelFromSelection();
+      updateSceneObjectsList();
       pushHistory();           // commit final transform once per drag
     }
     isTransforming = false;
@@ -179,19 +216,42 @@ const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
 dirLight2.position.set(-5, 8, -5);
 scene.add(dirLight2);
 
-// Floor
+// Floor & grid
+const floorSize = GRID_WORLD_SIZE;
+const floorMaterial = new THREE.MeshStandardMaterial({
+  color: 0x1a1a1a,
+  roughness: 1.0,
+  metalness: 0.0,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.08,
+  depthWrite: false
+});
 const floor = new THREE.Mesh(
-  new THREE.CircleGeometry(2.5, 32),
-  new THREE.MeshStandardMaterial({
-    color: 0x222222,
-    roughness: 1.0,
-    metalness: 0.0,
-    side: THREE.DoubleSide
-  })
+  new THREE.PlaneGeometry(floorSize, floorSize),
+  floorMaterial
 );
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = 0;
 scene.add(floor);
+
+const gridHelper = new THREE.GridHelper(
+  floorSize,
+  floorSize / GRID_SIZE,
+  0x444444,
+  0x242424
+);
+const gridMaterials = Array.isArray(gridHelper.material)
+  ? gridHelper.material
+  : [gridHelper.material];
+gridMaterials.forEach((mat) => {
+  mat.transparent = true;
+  mat.opacity = 0.55;
+  mat.depthWrite = false;
+});
+gridHelper.renderOrder = 1;
+gridHelper.position.y = 0.002;
+scene.add(gridHelper);
 
 // Shared materials
 const normalMaterial = new THREE.MeshStandardMaterial({
@@ -223,6 +283,10 @@ function updateBottomControlsVisibility() {
   basicControls.style.display = (!isAdvancedMode && hasSelection) ? 'flex' : 'none';
   advancedControls.style.display = (isAdvancedMode && hasSelection) ? 'flex' : 'none';
   bottomControls.style.display = hasSelection ? 'flex' : 'none';
+  if (gridControls) {
+    gridControls.style.display = (isAdvancedMode && hasSelection) ? 'flex' : 'none';
+  }
+  updateGridSnapButton();
 
   // Update rows highlight in scene objects list
   if (sceneObjectsList) {
@@ -258,6 +322,7 @@ function updateTransformControls() {
   centerMeshPivot(mesh);
   transformControls.attach(mesh);
   scene.add(transformControls);
+  refreshTransformSnapping();
 }
 
 function clearSelection() {
@@ -292,6 +357,81 @@ function handleMeshClick(mesh, shiftKey) {
   updateBottomControlsVisibility();
   updateTransformControls();
   syncAdvancedPanelFromSelection();
+}
+
+function getTranslationSnapStep() {
+  return translationSnapValue || GRID_SIZE;
+}
+
+function snapToStep(value, step) {
+  return Math.round(value / step) * step;
+}
+
+function applyGridSnap(mesh) {
+  if (!mesh) return;
+  const step = getTranslationSnapStep();
+  mesh.position.x = snapToStep(mesh.position.x, step);
+  mesh.position.z = snapToStep(mesh.position.z, step);
+}
+
+function applyGridSnapToSelection() {
+  if (!gridSnapEnabled || selectedMeshes.size === 0) return;
+  selectedMeshes.forEach((mesh) => applyGridSnap(mesh));
+}
+
+function updateGridSnapButton() {
+  if (!gridSnapBtn) return;
+  const isActiveInMode = isAdvancedMode && gridSnapEnabled;
+  gridSnapBtn.classList.toggle('active', isActiveInMode);
+  gridSnapBtn.setAttribute('aria-pressed', isActiveInMode ? 'true' : 'false');
+  gridSnapBtn.disabled = !isAdvancedMode;
+  if (gridSnapIcon) {
+    const iconState = isAdvancedMode
+      ? (gridSnapEnabled ? 'grid_on' : 'grid_off')
+      : (advancedGridSnapEnabled ? 'grid_on' : 'grid_off');
+    gridSnapIcon.textContent = iconState;
+  }
+  const snapStep = getTranslationSnapStep();
+  const display = Number.isInteger(snapStep) ? snapStep.toString() : snapStep.toFixed(1);
+  gridSnapBtn.title = isAdvancedMode
+    ? (gridSnapEnabled ? `Grid snapping: On (${display} mm)` : 'Grid snapping: Off')
+    : (advancedGridSnapEnabled
+      ? 'Grid snapping will be ON in Advanced mode'
+      : 'Grid snapping will be OFF in Advanced mode');
+}
+
+function refreshTransformSnapping() {
+  transformControls.setTranslationSnap(gridSnapEnabled ? getTranslationSnapStep() : null);
+
+  const r = snapRotateInput ? parseFloat(snapRotateInput.value) : NaN;
+  transformControls.setRotationSnap(
+    !Number.isNaN(r) && r > 0 ? THREE.MathUtils.degToRad(r) : null
+  );
+}
+
+function setGridSnapEnabled(enabled, { snapSelection = false, commit = false } = {}) {
+  if (!isAdvancedMode) {
+    advancedGridSnapEnabled = enabled;
+    gridSnapEnabled = false;
+    refreshTransformSnapping();
+    updateGridSnapButton();
+    return;
+  }
+
+  advancedGridSnapEnabled = enabled;
+  gridSnapEnabled = enabled;
+  if (snapTranslateInput && enabled) {
+    snapTranslateInput.value = translationSnapValue.toString();
+  }
+  refreshTransformSnapping();
+  updateGridSnapButton();
+
+  if (enabled && snapSelection && selectedMeshes.size > 0) {
+    applyGridSnapToSelection();
+    syncAdvancedPanelFromSelection();
+    updateSceneObjectsList();
+    if (commit) pushHistory();
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -417,7 +557,6 @@ function updateHistoryButtons() {
 }
 
 undoButton.addEventListener('click', undo);
-deleteButton.addEventListener('click', () => deleteSelected());
 
 /* -------------------------------------------------------------------------- */
 /* FBX LOADING & PARTS LIBRARY                                                 */
@@ -543,6 +682,11 @@ function updatePartsListUI() {
     item.addEventListener('dragstart', (e) => {
       e.dataTransfer.effectAllowed = 'copy';
       e.dataTransfer.setData('text/plain', idx.toString());
+      beginPartDragPreview(idx);
+    });
+
+    item.addEventListener('dragend', () => {
+      endPartDragPreview();
     });
 
     if (isTouch) {
@@ -751,17 +895,112 @@ function renderPartPreview(geometry, canvas) {
 /* DRAG & DROP / ADD INSTANCES                                                 */
 /* -------------------------------------------------------------------------- */
 
+function beginPartDragPreview(partIndex) {
+  if (!isAdvancedMode) {
+    endPartDragPreview();
+    return;
+  }
+
+  const part = partLibrary[partIndex];
+  if (!part) return;
+
+  endPartDragPreview();
+
+  const geomClone = part.geometry.clone();
+  dragPreviewMesh = new THREE.Mesh(geomClone, dragPreviewMaterial);
+  dragPreviewMesh.visible = false;
+  dragPreviewMesh.renderOrder = 2;
+  dragPreviewMesh.userData.partIndex = partIndex;
+  dragPreviewMesh.castShadow = false;
+  dragPreviewMesh.receiveShadow = false;
+  scene.add(dragPreviewMesh);
+
+  dragPreviewPartIndex = partIndex;
+  hasPendingDropPosition = false;
+}
+
+function endPartDragPreview() {
+  if (!dragPreviewMesh) {
+    dragPreviewPartIndex = null;
+    hasPendingDropPosition = false;
+    return;
+  }
+  scene.remove(dragPreviewMesh);
+  dragPreviewMesh.geometry?.dispose();
+  dragPreviewMesh = null;
+  dragPreviewPartIndex = null;
+  hasPendingDropPosition = false;
+}
+
+function updateDragPreviewFromEvent(event) {
+  if (!dragPreviewMesh || !isAdvancedMode) return;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  previewPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  previewPointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  previewRaycaster.setFromCamera(previewPointer, camera);
+  const intersection = previewRaycaster.ray.intersectPlane(dropPlane, dropIntersection);
+  if (!intersection) {
+    dragPreviewMesh.visible = false;
+    hasPendingDropPosition = false;
+    return;
+  }
+
+  let x = intersection.x;
+  let z = intersection.z;
+  if (gridSnapEnabled) {
+    const step = getTranslationSnapStep();
+    x = snapToStep(x, step);
+    z = snapToStep(z, step);
+  }
+
+  dragPreviewMesh.position.set(x, intersection.y, z);
+  dragPreviewMesh.visible = true;
+  pendingDropPosition.set(x, intersection.y, z);
+  hasPendingDropPosition = true;
+}
+
 renderer.domElement.addEventListener('dragover', (e) => {
   e.preventDefault();
-  e.dataTransfer.dropEffect = 'copy';
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'copy';
+  }
+  updateDragPreviewFromEvent(e);
+});
+
+renderer.domElement.addEventListener('dragleave', (e) => {
+  if (!dragPreviewMesh) return;
+  const related = e.relatedTarget;
+  if (related && renderer.domElement.contains(related)) return;
+  dragPreviewMesh.visible = false;
+  hasPendingDropPosition = false;
 });
 
 renderer.domElement.addEventListener('drop', (e) => {
   e.preventDefault();
-  const index = parseInt(e.dataTransfer.getData('text/plain'), 10);
-  if (Number.isNaN(index)) return;
-  const mesh = addPartInstance(index);
-  if (!mesh) return;
+  let index = parseInt(e.dataTransfer.getData('text/plain'), 10);
+  if (Number.isNaN(index)) {
+    index = dragPreviewPartIndex != null ? dragPreviewPartIndex : NaN;
+  }
+  if (Number.isNaN(index)) {
+    endPartDragPreview();
+    return;
+  }
+
+  if (isAdvancedMode) {
+    updateDragPreviewFromEvent(e);
+  }
+
+  const spawnPosition = isAdvancedMode && hasPendingDropPosition
+    ? pendingDropPosition
+    : null;
+
+  const mesh = addPartInstance(index, spawnPosition);
+  if (!mesh) {
+    endPartDragPreview();
+    return;
+  }
   clearSelection();
   selectedMeshes.add(mesh);
   setMeshHighlight(mesh, true);
@@ -769,9 +1008,10 @@ renderer.domElement.addEventListener('drop', (e) => {
   updateTransformControls();
   syncAdvancedPanelFromSelection();
   pushHistory();
+  endPartDragPreview();
 });
 
-function addPartInstance(partIndex) {
+function addPartInstance(partIndex, initialPosition = null) {
   const part = partLibrary[partIndex];
   if (!part) return null;
 
@@ -779,9 +1019,17 @@ function addPartInstance(partIndex) {
 
   const geomClone = part.geometry.clone();
   const mesh = new THREE.Mesh(geomClone, normalMaterial);
-  mesh.position.set(0, 0, 0);
+  if (initialPosition) {
+    mesh.position.copy(initialPosition);
+  } else {
+    mesh.position.set(0, 0, 0);
+  }
   mesh.rotation.set(0, 0, 0);
   mesh.scale.set(1, 1, 1);
+
+  if (gridSnapEnabled) {
+    applyGridSnap(mesh);
+  }
 
   mesh.userData = {
     rotationSteps: 0,
@@ -802,7 +1050,7 @@ function addPartInstance(partIndex) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* SCENE OBJECTS LIST (ADVANCED MODE)                                          */
+/* SCENE OBJECTS LIST                                                          */
 /* -------------------------------------------------------------------------- */
 
 function findMeshByInstanceId(id) {
@@ -853,7 +1101,9 @@ function updateSceneObjectsList() {
     delBtn.dataset.action = 'delete';
     delBtn.innerHTML = '<span class="material-symbols-outlined">delete</span>';
 
-    actions.appendChild(dupBtn);
+    if (isAdvancedMode) {
+      actions.appendChild(dupBtn);
+    }
     actions.appendChild(delBtn);
     row.appendChild(actions);
 
@@ -878,7 +1128,7 @@ sceneObjectsList.addEventListener('click', (e) => {
     const action = actionBtn.dataset.action;
     if (action === 'delete') {
       deleteMeshInstance(mesh);
-    } else if (action === 'duplicate') {
+    } else if (action === 'duplicate' && isAdvancedMode) {
       duplicateMeshInstance(mesh);
     }
     return;
@@ -916,6 +1166,7 @@ function deleteMeshInstance(mesh) {
 }
 
 function duplicateMeshInstance(mesh) {
+  if (!isAdvancedMode) return;
   if (!mesh || !mesh.isMesh) return;
 
   const geomClone = mesh.geometry.clone();
@@ -923,6 +1174,10 @@ function duplicateMeshInstance(mesh) {
   clone.position.copy(mesh.position);
   clone.rotation.copy(mesh.rotation);
   clone.scale.copy(mesh.scale);
+
+  if (gridSnapEnabled) {
+    applyGridSnap(clone);
+  }
 
   clone.userData = {
     ...mesh.userData,
@@ -1024,6 +1279,10 @@ function rotateSelectedPart(deltaSteps) {
 
     const steps = (mesh.userData.rotationSteps ?? 0) + deltaSteps;
     mesh.userData.rotationSteps = ((steps % 4) + 4) % 4;
+
+    if (gridSnapEnabled) {
+      applyGridSnap(mesh);
+    }
   });
 
   pushHistory();
@@ -1040,6 +1299,10 @@ function rotateSelectedPartAroundCenter(deltaSteps) {
 
     const steps = (mesh.userData.rotationSteps ?? 0) + deltaSteps;
     mesh.userData.rotationSteps = ((steps % 4) + 4) % 4;
+
+    if (gridSnapEnabled) {
+      applyGridSnap(mesh);
+    }
   });
 
   pushHistory();
@@ -1068,6 +1331,14 @@ rotateRightBtn.addEventListener('click', () => {
   else rotateSelectedPartAroundCenter(1);
 });
 
+if (gridSnapBtn) {
+  gridSnapBtn.addEventListener('click', () => {
+    if (!isAdvancedMode) return;
+    const enable = !advancedGridSnapEnabled;
+    setGridSnapEnabled(enable);
+  });
+}
+
 function deleteSelected() {
   if (selectedMeshes.size === 0) return;
 
@@ -1086,23 +1357,29 @@ function deleteSelected() {
 /* -------------------------------------------------------------------------- */
 
 function setAdvancedMode(on) {
+  const wasAdvanced = isAdvancedMode;
   isAdvancedMode = on;
   advancedModeButton.classList.toggle('active', on);
 
   // Show/hide advanced panels
-  scenePanel.style.display = on ? 'block' : 'none';
   advancedPanel.style.display = on ? 'block' : 'none';
-
-  // Hide trash icon in advanced mode (we have per-object delete there)
-  deleteButton.style.display = on ? 'none' : '';
-
-  if (!on) {
+  if (on) {
+    setGridSnapEnabled(advancedGridSnapEnabled);
+    setTransformMode('translate');
+  } else {
+    if (wasAdvanced) {
+      advancedGridSnapEnabled = gridSnapEnabled;
+    }
+    gridSnapEnabled = false;
+    refreshTransformSnapping();
+    updateGridSnapButton();
     transformControls.detach();
+    endPartDragPreview();
   }
   updateBottomControlsVisibility();
   updateTransformControls();
   syncAdvancedPanelFromSelection();
-  if (on) setTransformMode('translate');
+  updateSceneObjectsList();
 }
 
 advancedModeButton.addEventListener('click', () => {
@@ -1170,6 +1447,10 @@ function applyAdvancedInputs() {
   if (!Number.isNaN(sy)) mesh.scale.y = sy;
   if (!Number.isNaN(sz)) mesh.scale.z = sz;
 
+  if (gridSnapEnabled) {
+    applyGridSnap(mesh);
+  }
+
   updateSceneObjectsList();
   pushHistory();
 }
@@ -1183,10 +1464,19 @@ function applyAdvancedInputs() {
 });
 
 function updateTransformSnapping() {
-  const t = parseFloat(snapTranslateInput.value);
-  transformControls.setTranslationSnap(!Number.isNaN(t) && t > 0 ? t : null);
+  const t = snapTranslateInput ? parseFloat(snapTranslateInput.value) : NaN;
+  if (!Number.isNaN(t) && t > 0) {
+    translationSnapValue = t;
+    lastValidTranslationSnap = t;
+  } else if (snapTranslateInput) {
+    translationSnapValue = lastValidTranslationSnap;
+    snapTranslateInput.value = lastValidTranslationSnap.toString();
+  }
 
-  const r = parseFloat(snapRotateInput.value);
+  refreshTransformSnapping();
+  updateGridSnapButton();
+
+  const r = snapRotateInput ? parseFloat(snapRotateInput.value) : NaN;
   transformControls.setRotationSnap(
     !Number.isNaN(r) && r > 0 ? THREE.MathUtils.degToRad(r) : null
   );
@@ -1424,7 +1714,8 @@ function animate() {
 }
 animate();
 
-updateHistoryButtons();
-updateBottomControlsVisibility();
-updateSceneObjectsList();
+updateTransformSnapping();
 setAdvancedMode(false); // start in basic mode
+resetHistory();
+pushHistory();
+updateHistoryButtons();
