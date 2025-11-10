@@ -103,10 +103,14 @@ body {
   padding: 8px 12px 10px;
   border-top: 1px solid var(--border-subtle);
   background: rgba(12, 12, 12, 0.98);
-  display: none; /* shown only in advanced mode */
+  display: block;
   font-size: 12px;
   position: relative;
   overflow-y: auto;
+}
+
+#advancedPanel {
+  display: none;
 }
 
 /* Vertical resize handles for panels */
