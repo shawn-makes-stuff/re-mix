@@ -1335,10 +1335,7 @@ if (gridSnapBtn) {
   gridSnapBtn.addEventListener('click', () => {
     if (!isAdvancedMode) return;
     const enable = !advancedGridSnapEnabled;
-    setGridSnapEnabled(enable, {
-      snapSelection: enable,
-      commit: enable
-    });
+    setGridSnapEnabled(enable);
   });
 }
 
