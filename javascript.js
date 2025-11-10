@@ -50,11 +50,14 @@ const advancedSelectionLabel = document.getElementById('advancedSelectionLabel')
 const posXInput = document.getElementById('posXInput');
 const posYInput = document.getElementById('posYInput');
 const posZInput = document.getElementById('posZInput');
+const rotXInput = document.getElementById('rotXInput');
 const rotYInput = document.getElementById('rotYInput');
+const rotZInput = document.getElementById('rotZInput');
 const scaleXInput = document.getElementById('scaleXInput');
 const scaleYInput = document.getElementById('scaleYInput');
 const scaleZInput = document.getElementById('scaleZInput');
 
+const snapCellSizeInput = document.getElementById('snapCellSizeInput');
 const snapTranslateInput = document.getElementById('snapTranslateInput');
 const snapRotateInput = document.getElementById('snapRotateInput');
 
@@ -73,15 +76,32 @@ const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 let rotateAroundWorld = true;
 let isAdvancedMode = false;
 
-const GRID_SIZE = 25; // millimeters per tile
-const GRID_WORLD_SIZE = GRID_SIZE * 40; // generous play area
+const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
+const BASE_GRID_DIVISIONS = 40;
+const GRID_WORLD_SIZE = DEFAULT_GRID_CELL_SIZE * BASE_GRID_DIVISIONS; // generous play area
 let gridSnapEnabled = false;
 let advancedGridSnapEnabled = true;
-let translationSnapValue = GRID_SIZE;
-let lastValidTranslationSnap = GRID_SIZE;
+let gridCellSize = DEFAULT_GRID_CELL_SIZE;
+let translationSnapValue = DEFAULT_GRID_CELL_SIZE;
+let lastValidTranslationSnap = DEFAULT_GRID_CELL_SIZE;
+
+if (snapCellSizeInput) {
+  snapCellSizeInput.value = gridCellSize.toString();
+}
 
 if (snapTranslateInput) {
-  snapTranslateInput.value = GRID_SIZE.toString();
+  snapTranslateInput.value = translationSnapValue.toString();
+}
+
+if (snapCellSizeInput) {
+  snapCellSizeInput.addEventListener('change', () => {
+    const value = parseFloat(snapCellSizeInput.value);
+    if (!Number.isNaN(value) && value > 0) {
+      updateGridCellSize(value);
+    } else {
+      snapCellSizeInput.value = gridCellSize.toString();
+    }
+  });
 }
 
 const partLibrary = []; // { name, geometry, category }
@@ -236,8 +256,8 @@ floor.position.y = 0;
 scene.add(floor);
 
 const gridHelper = new THREE.GridHelper(
-  floorSize,
-  floorSize / GRID_SIZE,
+  GRID_WORLD_SIZE,
+  BASE_GRID_DIVISIONS,
   0x444444,
   0x242424
 );
@@ -252,6 +272,46 @@ gridMaterials.forEach((mat) => {
 gridHelper.renderOrder = 1;
 gridHelper.position.y = 0.002;
 scene.add(gridHelper);
+
+function updateGridCellSize(size) {
+  if (!(size > 0)) {
+    if (snapCellSizeInput) {
+      snapCellSizeInput.value = gridCellSize.toString();
+    }
+    return;
+  }
+  const prevSize = gridCellSize;
+  gridCellSize = size;
+
+  const scale = size / DEFAULT_GRID_CELL_SIZE;
+  floor.scale.set(scale, 1, scale);
+  gridHelper.scale.set(scale, 1, scale);
+
+  if (snapCellSizeInput) {
+    snapCellSizeInput.value = size.toString();
+  }
+
+  if (snapTranslateInput) {
+    const moveValue = parseFloat(snapTranslateInput.value);
+    if (Number.isNaN(moveValue) || Math.abs(moveValue - prevSize) < 1e-6) {
+      translationSnapValue = size;
+      lastValidTranslationSnap = size;
+      snapTranslateInput.value = size.toString();
+    }
+  } else {
+    translationSnapValue = size;
+    lastValidTranslationSnap = size;
+  }
+
+  updateTransformSnapping();
+
+  if (gridSnapEnabled && selectedMeshes.size > 0) {
+    applyGridSnapToSelection();
+    syncAdvancedPanelFromSelection();
+    updateSceneObjectsList();
+    pushHistory();
+  }
+}
 
 // Shared materials
 const normalMaterial = new THREE.MeshStandardMaterial({
@@ -280,12 +340,26 @@ function setMeshHighlight(mesh, isSelected) {
 
 function updateBottomControlsVisibility() {
   const hasSelection = selectedMeshes.size > 0;
-  basicControls.style.display = (!isAdvancedMode && hasSelection) ? 'flex' : 'none';
-  advancedControls.style.display = (isAdvancedMode && hasSelection) ? 'flex' : 'none';
-  bottomControls.style.display = hasSelection ? 'flex' : 'none';
-  if (gridControls) {
-    gridControls.style.display = (isAdvancedMode && hasSelection) ? 'flex' : 'none';
+  if (bottomControls) {
+    bottomControls.style.display = 'flex';
   }
+  if (basicControls) {
+    basicControls.style.display = isAdvancedMode ? 'none' : 'flex';
+  }
+  if (advancedControls) {
+    advancedControls.style.display = isAdvancedMode ? 'flex' : 'none';
+  }
+  if (gridControls) {
+    gridControls.style.display = isAdvancedMode ? 'flex' : 'none';
+  }
+
+  if (rotateLeftBtn) rotateLeftBtn.disabled = !hasSelection;
+  if (rotateRightBtn) rotateRightBtn.disabled = !hasSelection;
+
+  if (moveModeBtn) moveModeBtn.disabled = !hasSelection;
+  if (rotateModeBtn) rotateModeBtn.disabled = !hasSelection;
+  if (scaleModeBtn) scaleModeBtn.disabled = !hasSelection;
+
   updateGridSnapButton();
 
   // Update rows highlight in scene objects list
@@ -360,7 +434,7 @@ function handleMeshClick(mesh, shiftKey) {
 }
 
 function getTranslationSnapStep() {
-  return translationSnapValue || GRID_SIZE;
+  return translationSnapValue || gridCellSize;
 }
 
 function snapToStep(value, step) {
@@ -1390,7 +1464,7 @@ function syncAdvancedPanelFromSelection() {
   const hasSingle = selectedMeshes.size === 1;
   const inputs = [
     posXInput, posYInput, posZInput,
-    rotYInput,
+    rotXInput, rotYInput, rotZInput,
     scaleXInput, scaleYInput, scaleZInput
   ];
 
@@ -1416,8 +1490,12 @@ function syncAdvancedPanelFromSelection() {
   posYInput.value = mesh.position.y.toFixed(3);
   posZInput.value = mesh.position.z.toFixed(3);
 
+  const rotXDeg = THREE.MathUtils.radToDeg(mesh.rotation.x);
   const rotYDeg = THREE.MathUtils.radToDeg(mesh.rotation.y);
+  const rotZDeg = THREE.MathUtils.radToDeg(mesh.rotation.z);
+  rotXInput.value = rotXDeg.toFixed(1);
   rotYInput.value = rotYDeg.toFixed(1);
+  rotZInput.value = rotZDeg.toFixed(1);
 
   scaleXInput.value = mesh.scale.x.toFixed(3);
   scaleYInput.value = mesh.scale.y.toFixed(3);
@@ -1432,7 +1510,9 @@ function applyAdvancedInputs() {
   const px = parseFloat(posXInput.value);
   const py = parseFloat(posYInput.value);
   const pz = parseFloat(posZInput.value);
+  const rxDeg = parseFloat(rotXInput.value);
   const ryDeg = parseFloat(rotYInput.value);
+  const rzDeg = parseFloat(rotZInput.value);
   const sx = parseFloat(scaleXInput.value);
   const sy = parseFloat(scaleYInput.value);
   const sz = parseFloat(scaleZInput.value);
@@ -1441,7 +1521,9 @@ function applyAdvancedInputs() {
   if (!Number.isNaN(py)) mesh.position.y = py;
   if (!Number.isNaN(pz)) mesh.position.z = pz;
 
+  if (!Number.isNaN(rxDeg)) mesh.rotation.x = THREE.MathUtils.degToRad(rxDeg);
   if (!Number.isNaN(ryDeg)) mesh.rotation.y = THREE.MathUtils.degToRad(ryDeg);
+  if (!Number.isNaN(rzDeg)) mesh.rotation.z = THREE.MathUtils.degToRad(rzDeg);
 
   if (!Number.isNaN(sx)) mesh.scale.x = sx;
   if (!Number.isNaN(sy)) mesh.scale.y = sy;
@@ -1457,7 +1539,7 @@ function applyAdvancedInputs() {
 
 [
   posXInput, posYInput, posZInput,
-  rotYInput,
+  rotXInput, rotYInput, rotZInput,
   scaleXInput, scaleYInput, scaleZInput
 ].forEach((input) => {
   input.addEventListener('change', applyAdvancedInputs);
