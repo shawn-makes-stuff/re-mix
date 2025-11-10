@@ -46,11 +46,14 @@ const advancedSelectionLabel = document.getElementById('advancedSelectionLabel')
 const posXInput = document.getElementById('posXInput');
 const posYInput = document.getElementById('posYInput');
 const posZInput = document.getElementById('posZInput');
+const rotXInput = document.getElementById('rotXInput');
 const rotYInput = document.getElementById('rotYInput');
+const rotZInput = document.getElementById('rotZInput');
 const scaleXInput = document.getElementById('scaleXInput');
 const scaleYInput = document.getElementById('scaleYInput');
 const scaleZInput = document.getElementById('scaleZInput');
 
+const cellSizeInput = document.getElementById('cellSizeInput');
 const snapTranslateInput = document.getElementById('snapTranslateInput');
 const snapRotateInput = document.getElementById('snapRotateInput');
 
@@ -68,6 +71,8 @@ const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
 let rotateAroundWorld = true;
 let isAdvancedMode = false;
+const DEFAULT_CELL_SIZE_MM = 25;
+let currentCellSizeMm = DEFAULT_CELL_SIZE_MM;
 
 const partLibrary = []; // { name, geometry, category }
 const placedPartsGroup = new THREE.Group();
@@ -220,9 +225,16 @@ function setMeshHighlight(mesh, isSelected) {
 
 function updateBottomControlsVisibility() {
   const hasSelection = selectedMeshes.size > 0;
-  basicControls.style.display = (!isAdvancedMode && hasSelection) ? 'flex' : 'none';
-  advancedControls.style.display = (isAdvancedMode && hasSelection) ? 'flex' : 'none';
-  bottomControls.style.display = hasSelection ? 'flex' : 'none';
+  bottomControls.style.display = 'flex';
+  basicControls.style.display = isAdvancedMode ? 'none' : 'flex';
+  advancedControls.style.display = isAdvancedMode ? 'flex' : 'none';
+
+  rotateLeftBtn.disabled = !hasSelection;
+  rotateRightBtn.disabled = !hasSelection;
+
+  [moveModeBtn, rotateModeBtn, scaleModeBtn].forEach((btn) => {
+    btn.disabled = !hasSelection;
+  });
 
   // Update rows highlight in scene objects list
   if (sceneObjectsList) {
@@ -1113,7 +1125,7 @@ function syncAdvancedPanelFromSelection() {
   const hasSingle = selectedMeshes.size === 1;
   const inputs = [
     posXInput, posYInput, posZInput,
-    rotYInput,
+    rotXInput, rotYInput, rotZInput,
     scaleXInput, scaleYInput, scaleZInput
   ];
 
@@ -1139,8 +1151,10 @@ function syncAdvancedPanelFromSelection() {
   posYInput.value = mesh.position.y.toFixed(3);
   posZInput.value = mesh.position.z.toFixed(3);
 
-  const rotYDeg = THREE.MathUtils.radToDeg(mesh.rotation.y);
-  rotYInput.value = rotYDeg.toFixed(1);
+  const rot = mesh.rotation;
+  rotXInput.value = THREE.MathUtils.radToDeg(rot.x).toFixed(1);
+  rotYInput.value = THREE.MathUtils.radToDeg(rot.y).toFixed(1);
+  rotZInput.value = THREE.MathUtils.radToDeg(rot.z).toFixed(1);
 
   scaleXInput.value = mesh.scale.x.toFixed(3);
   scaleYInput.value = mesh.scale.y.toFixed(3);
@@ -1155,7 +1169,9 @@ function applyAdvancedInputs() {
   const px = parseFloat(posXInput.value);
   const py = parseFloat(posYInput.value);
   const pz = parseFloat(posZInput.value);
+  const rxDeg = parseFloat(rotXInput.value);
   const ryDeg = parseFloat(rotYInput.value);
+  const rzDeg = parseFloat(rotZInput.value);
   const sx = parseFloat(scaleXInput.value);
   const sy = parseFloat(scaleYInput.value);
   const sz = parseFloat(scaleZInput.value);
@@ -1164,7 +1180,9 @@ function applyAdvancedInputs() {
   if (!Number.isNaN(py)) mesh.position.y = py;
   if (!Number.isNaN(pz)) mesh.position.z = pz;
 
+  if (!Number.isNaN(rxDeg)) mesh.rotation.x = THREE.MathUtils.degToRad(rxDeg);
   if (!Number.isNaN(ryDeg)) mesh.rotation.y = THREE.MathUtils.degToRad(ryDeg);
+  if (!Number.isNaN(rzDeg)) mesh.rotation.z = THREE.MathUtils.degToRad(rzDeg);
 
   if (!Number.isNaN(sx)) mesh.scale.x = sx;
   if (!Number.isNaN(sy)) mesh.scale.y = sy;
@@ -1176,11 +1194,27 @@ function applyAdvancedInputs() {
 
 [
   posXInput, posYInput, posZInput,
-  rotYInput,
+  rotXInput, rotYInput, rotZInput,
   scaleXInput, scaleYInput, scaleZInput
 ].forEach((input) => {
   input.addEventListener('change', applyAdvancedInputs);
 });
+
+function updateCellSizeSetting() {
+  if (!cellSizeInput) return;
+
+  let value = parseFloat(cellSizeInput.value);
+  if (Number.isNaN(value) || value <= 0) {
+    value = DEFAULT_CELL_SIZE_MM;
+  }
+
+  currentCellSizeMm = value;
+  cellSizeInput.value = value.toString();
+
+  if (snapTranslateInput) {
+    snapTranslateInput.placeholder = `e.g. ${currentCellSizeMm}`;
+  }
+}
 
 function updateTransformSnapping() {
   const t = parseFloat(snapTranslateInput.value);
@@ -1194,6 +1228,10 @@ function updateTransformSnapping() {
 
 snapTranslateInput.addEventListener('change', updateTransformSnapping);
 snapRotateInput.addEventListener('change', updateTransformSnapping);
+cellSizeInput.addEventListener('change', () => {
+  updateCellSizeSetting();
+  updateTransformSnapping();
+});
 
 function setTransformMode(mode) {
   if (!isAdvancedMode) return;
@@ -1207,6 +1245,10 @@ function setTransformMode(mode) {
 moveModeBtn.addEventListener('click', () => setTransformMode('translate'));
 rotateModeBtn.addEventListener('click', () => setTransformMode('rotate'));
 scaleModeBtn.addEventListener('click', () => setTransformMode('scale'));
+
+updateCellSizeSetting();
+updateTransformSnapping();
+updateBottomControlsVisibility();
 
 /* -------------------------------------------------------------------------- */
 /* KEYBOARD SHORTCUTS                                                          */

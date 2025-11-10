@@ -19,14 +19,14 @@
     <button id="menuButton" class="icon-btn small-icon" title="Menu">
       <span class="material-symbols-outlined">menu</span>
     </button>
+    <button id="helpButton" class="icon-btn small-icon" title="Help">
+      <span class="material-symbols-outlined">help</span>
+    </button>
     <button id="undoButton" class="icon-btn small-icon" title="Undo">
       <span class="material-symbols-outlined">undo</span>
     </button>
     <button id="deleteButton" class="icon-btn small-icon" title="Delete selected">
       <span class="material-symbols-outlined">delete</span>
-    </button>
-    <button id="helpButton" class="icon-btn small-icon" title="Help">
-      <span class="material-symbols-outlined">help</span>
     </button>
     <button id="advancedModeButton" class="icon-btn small-icon" title="Advanced mode">
       <span class="material-symbols-outlined">tune</span>
@@ -38,13 +38,13 @@
     <!-- Basic controls -->
     <div id="basicControls" class="controls-group">
       <button id="rotateLeftBtn" class="icon-btn large" title="Rotate left">
-        <span class="material-symbols-outlined">arrow_back</span>
+        <span class="material-symbols-outlined">rotate_left</span>
       </button>
       <button id="rotationModeBtn" class="icon-btn large" title="Rotation mode: World">
         <span class="material-symbols-outlined" id="rotationModeIcon">public</span>
       </button>
       <button id="rotateRightBtn" class="icon-btn large" title="Rotate right">
-        <span class="material-symbols-outlined">arrow_forward</span>
+        <span class="material-symbols-outlined">rotate_right</span>
       </button>
     </div>
 
@@ -121,9 +121,18 @@
         </label>
 
         <label class="advanced-field">
-          <span>Rot Y (°)</span>
-          <input id="rotYInput" type="number" step="5">
+          <span>Rot X (°)</span>
+          <input id="rotXInput" type="number" step="1">
         </label>
+        <label class="advanced-field">
+          <span>Rot Y (°)</span>
+          <input id="rotYInput" type="number" step="1">
+        </label>
+        <label class="advanced-field">
+          <span>Rot Z (°)</span>
+          <input id="rotZInput" type="number" step="1">
+        </label>
+
         <label class="advanced-field">
           <span>Scale X</span>
           <input id="scaleXInput" type="number" step="0.1">
@@ -141,12 +150,16 @@
       <div class="advanced-subtitle">Snapping</div>
       <div class="advanced-grid snap-grid">
         <label class="advanced-field">
-          <span>Move (units)</span>
-          <input id="snapTranslateInput" type="number" step="0.1" placeholder="e.g. 1">
+          <span>Cell size (mm)</span>
+          <input id="cellSizeInput" type="number" step="1" min="1" value="25">
+        </label>
+        <label class="advanced-field">
+          <span>Move (mm)</span>
+          <input id="snapTranslateInput" type="number" step="0.1" placeholder="e.g. 25">
         </label>
         <label class="advanced-field">
           <span>Rotate (°)</span>
-          <input id="snapRotateInput" type="number" step="5" placeholder="e.g. 30">
+          <input id="snapRotateInput" type="number" step="1" placeholder="e.g. 30">
         </label>
       </div>
     </div>
