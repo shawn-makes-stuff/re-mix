@@ -695,6 +695,16 @@ fileInput.addEventListener('change', async (e) => {
         const geometry = stlLoader.parse(arrayBuffer);
         if (!geometry.attributes.normal) geometry.computeVertexNormals();
 
+        geometry.computeBoundingBox();
+        const boundingBox = geometry.boundingBox;
+        if (boundingBox) {
+          const center = new THREE.Vector3();
+          boundingBox.getCenter(center);
+          geometry.translate(-center.x, -center.y, -center.z);
+          geometry.computeBoundingBox();
+          geometry.computeBoundingSphere();
+        }
+
         const baseName = file.name.replace(/\.[^.]*$/u, '') ||
           `Part ${partLibrary.length + 1}`;
 
