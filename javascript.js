@@ -56,6 +56,9 @@ const rotZInput = document.getElementById('rotZInput');
 const scaleXInput = document.getElementById('scaleXInput');
 const scaleYInput = document.getElementById('scaleYInput');
 const scaleZInput = document.getElementById('scaleZInput');
+const flipXBtn = document.getElementById('flipXBtn');
+const flipYBtn = document.getElementById('flipYBtn');
+const flipZBtn = document.getElementById('flipZBtn');
 
 const snapCellSizeInput = document.getElementById('snapCellSizeInput');
 const snapTranslateInput = document.getElementById('snapTranslateInput');
@@ -64,6 +67,11 @@ const snapRotateInput = document.getElementById('snapRotateInput');
 const moveModeBtn = document.getElementById('moveModeBtn');
 const rotateModeBtn = document.getElementById('rotateModeBtn');
 const scaleModeBtn = document.getElementById('scaleModeBtn');
+const flipButtons = [
+  { btn: flipXBtn, axis: 'x' },
+  { btn: flipYBtn, axis: 'y' },
+  { btn: flipZBtn, axis: 'z' }
+].filter(({ btn }) => !!btn);
 
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
@@ -1579,6 +1587,12 @@ function syncAdvancedPanelFromSelection() {
   ];
 
   inputs.forEach((el) => { el.disabled = !hasSingle || !isAdvancedMode; });
+  flipButtons.forEach(({ btn }) => {
+    btn.disabled = !hasSingle || !isAdvancedMode;
+    if (!hasSingle || !isAdvancedMode) {
+      btn.classList.remove('active');
+    }
+  });
 
   if (!isAdvancedMode) {
     advancedSelectionLabel.textContent = 'Advanced mode off';
@@ -1610,6 +1624,10 @@ function syncAdvancedPanelFromSelection() {
   scaleXInput.value = mesh.scale.x.toFixed(3);
   scaleYInput.value = mesh.scale.y.toFixed(3);
   scaleZInput.value = mesh.scale.z.toFixed(3);
+
+  flipButtons.forEach(({ btn, axis }) => {
+    btn.classList.toggle('active', mesh.scale[axis] < 0);
+  });
 }
 
 function applyAdvancedInputs() {
@@ -1644,6 +1662,7 @@ function applyAdvancedInputs() {
   }
 
   updateSceneObjectsList();
+  syncAdvancedPanelFromSelection();
   pushHistory();
 }
 
@@ -1653,6 +1672,23 @@ function applyAdvancedInputs() {
   scaleXInput, scaleYInput, scaleZInput
 ].forEach((input) => {
   input.addEventListener('change', applyAdvancedInputs);
+});
+
+function flipSelectedAxis(axis) {
+  if (!isAdvancedMode || selectedMeshes.size !== 1) return;
+  const mesh = [...selectedMeshes][0];
+  const flipped = -mesh.scale[axis];
+  mesh.scale[axis] = Object.is(flipped, -0) ? 0 : flipped;
+  updateSceneObjectsList();
+  syncAdvancedPanelFromSelection();
+  updateTransformControls();
+  pushHistory();
+}
+
+flipButtons.forEach(({ btn, axis }) => {
+  btn.addEventListener('click', () => {
+    flipSelectedAxis(axis);
+  });
 });
 
 function updateTransformSnapping() {
