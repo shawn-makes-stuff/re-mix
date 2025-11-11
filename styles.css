@@ -429,6 +429,10 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
@@ -443,9 +447,9 @@ body {
 }
 
 .flip-toggle.active {
-  background: #202020;
+  background: rgba(45, 45, 45, 0.95);
   border-color: var(--accent-soft);
-  color: var(--text);
+  color: var(--accent);
 }
 
 .advanced-field input:disabled {
