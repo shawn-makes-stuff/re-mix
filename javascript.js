@@ -615,7 +615,59 @@ function applyGridSnap(mesh) {
 
 function applyGridSnapToSelection() {
   if (!gridSnapEnabled || selectedMeshes.size === 0) return;
-  selectedMeshes.forEach((mesh) => applyGridSnap(mesh));
+
+  if (selectedMeshes.size === 1) {
+    const [mesh] = selectedMeshes;
+    applyGridSnap(mesh);
+    return;
+  }
+
+  updateSelectionTransformAnchor({ resetOrientation: false });
+  selectionTransformAnchor.updateMatrixWorld(true);
+
+  const step = getTranslationSnapStep();
+  const anchorPosition = selectionTransformAnchor.position;
+  const targetX = snapToStep(anchorPosition.x, step);
+  const targetZ = snapToStep(anchorPosition.z, step);
+  const deltaX = targetX - anchorPosition.x;
+  const deltaZ = targetZ - anchorPosition.z;
+
+  if (Math.abs(deltaX) < 1e-6 && Math.abs(deltaZ) < 1e-6) {
+    return;
+  }
+
+  const translationMatrix = multiSelectionTempMatrix.makeTranslation(deltaX, 0, deltaZ);
+
+  selectedMeshes.forEach((mesh) => {
+    if (!mesh?.isObject3D || !mesh.parent) return;
+
+    mesh.updateMatrixWorld(true);
+
+    const newMatrixWorld = multiSelectionTempMatrix2
+      .copy(translationMatrix)
+      .multiply(mesh.matrixWorld);
+
+    const parentMatrixWorldInverse = multiSelectionTempMatrix3
+      .copy(mesh.parent.matrixWorld)
+      .invert();
+
+    multiSelectionTempMatrix4.copy(parentMatrixWorldInverse).multiply(newMatrixWorld);
+    multiSelectionTempMatrix4.decompose(
+      multiSelectionTempPosition,
+      multiSelectionTempQuaternion,
+      multiSelectionTempScale
+    );
+
+    mesh.position.copy(multiSelectionTempPosition);
+    mesh.quaternion.copy(multiSelectionTempQuaternion);
+    mesh.scale.copy(multiSelectionTempScale);
+    mesh.updateMatrix();
+    mesh.updateMatrixWorld(true);
+  });
+
+  selectionTransformAnchor.position.x += deltaX;
+  selectionTransformAnchor.position.z += deltaZ;
+  selectionTransformAnchor.updateMatrixWorld(true);
 }
 
 function updateGridSnapButton() {
