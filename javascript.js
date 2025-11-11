@@ -112,8 +112,38 @@ let history = [];
 let historyIndex = -1;
 let nextInstanceId = 1;
 
+const instanceIdLookup = new Map();
+const sceneRowByInstanceId = new Map();
+
 const loader = new FBXLoader();
 const stlLoader = new STLLoader();
+
+const previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+previewRenderer.setPixelRatio(window.devicePixelRatio);
+previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
+previewRenderer.setClearColor(0x111111, 1);
+
+const previewScene = new THREE.Scene();
+previewScene.background = new THREE.Color(0x111111);
+const previewCamera = new THREE.PerspectiveCamera(30, 1, 0.01, 50);
+const previewLight = new THREE.DirectionalLight(0xffffff, 1.0);
+previewLight.position.set(5, 10, 7);
+previewScene.add(previewLight);
+previewScene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+const previewMeshGroup = new THREE.Group();
+previewScene.add(previewMeshGroup);
+
+const previewMaterial = new THREE.MeshStandardMaterial({
+  color: 0xaaaaaa,
+  roughness: 0.8,
+  metalness: 0.2
+});
+
+let previewMeshInstance = null;
+const previewBox = new THREE.Box3();
+const previewSize = new THREE.Vector3();
+const previewCenter = new THREE.Vector3();
 
 const dragPreviewMaterial = new THREE.MeshBasicMaterial({
   color: 0xffffff,
@@ -377,12 +407,7 @@ function updateBottomControlsVisibility() {
 
   // Update rows highlight in scene objects list
   if (sceneObjectsList) {
-    [...sceneObjectsList.querySelectorAll('.scene-object-row')].forEach((row) => {
-      const id = Number(row.dataset.instanceId);
-      const mesh = findMeshByInstanceId(id);
-      const isSelected = mesh && selectedMeshes.has(mesh);
-      row.classList.toggle('selected', isSelected);
-    });
+    updateSceneObjectSelectionStyles();
   }
 }
 
@@ -549,6 +574,8 @@ function clearPlacedParts() {
     child.geometry?.dispose();
   });
   placedPartsGroup.clear();
+  instanceIdLookup.clear();
+  sceneRowByInstanceId.clear();
   clearSelection();
 }
 
@@ -599,6 +626,7 @@ function loadState(state) {
 
     mesh.castShadow = mesh.receiveShadow = true;
     placedPartsGroup.add(mesh);
+    registerMeshInstance(mesh);
   });
 
   nextInstanceId = Math.max(nextInstanceId, maxInstanceId + 1);
@@ -972,61 +1000,58 @@ function updatePartsListUI() {
 }
 
 function renderPartPreview(geometry, canvas) {
-  const w = canvas.width;
-  const h = canvas.height;
+  if (!geometry || !canvas) return;
 
-  const previewRenderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: true,
-    alpha: true
-  });
-  previewRenderer.setSize(w, h, false);
-  previewRenderer.setPixelRatio(window.devicePixelRatio);
-  previewRenderer.setClearColor(0x111111, 1);
+  const width = canvas.width;
+  const height = canvas.height;
+  if (!(width > 0 && height > 0)) return;
 
-  const sceneThumb = new THREE.Scene();
-  const camThumb = new THREE.PerspectiveCamera(30, w / h, 0.01, 50);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#111111';
+  ctx.fillRect(0, 0, width, height);
 
-  const light = new THREE.DirectionalLight(0xffffff, 1.0);
-  light.position.set(5, 10, 7);
-  sceneThumb.add(light);
-  sceneThumb.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const dpr = window.devicePixelRatio || 1;
+  previewRenderer.setPixelRatio(dpr);
+  previewRenderer.setSize(width, height, false);
 
-  const geomClone = geometry.clone();
-  const posAttr = geomClone.getAttribute('position');
-  const box = new THREE.Box3().setFromBufferAttribute(posAttr);
-  const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
+  previewCamera.aspect = width / height;
+  previewCamera.updateProjectionMatrix();
 
-  const maxDim = Math.max(size.x, size.y, size.z) || 1;
-  const scale = 1 / maxDim;
-  geomClone.scale(scale, scale, scale);
+  if (!previewMeshInstance) {
+    previewMeshInstance = new THREE.Mesh(geometry, previewMaterial);
+    previewMeshGroup.add(previewMeshInstance);
+  } else {
+    previewMeshInstance.geometry = geometry;
+  }
 
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xaaaaaa,
-    roughness: 0.8,
-    metalness: 0.2
-  });
-  const mesh = new THREE.Mesh(geomClone, mat);
+  previewMeshInstance.position.set(0, 0, 0);
+  previewMeshInstance.rotation.set(0, 0, 0);
+  previewMeshInstance.scale.set(1, 1, 1);
 
-  const box2 = new THREE.Box3().setFromObject(mesh);
-  const center2 = new THREE.Vector3();
-  box2.getCenter(center2);
-  mesh.position.sub(center2);
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox();
+  }
 
-  sceneThumb.add(mesh);
+  const boundingBox = geometry.boundingBox;
+  if (!boundingBox) return;
+
+  previewBox.copy(boundingBox);
+  previewBox.getSize(previewSize);
+  previewBox.getCenter(previewCenter);
+
+  const maxDim = Math.max(previewSize.x, previewSize.y, previewSize.z) || 1;
+  const invScale = 1 / maxDim;
+  previewMeshInstance.position.copy(previewCenter).multiplyScalar(-1);
+  previewMeshInstance.scale.setScalar(invScale);
 
   const fitDist = 2.0;
-  camThumb.position.set(0, fitDist, fitDist * 1.2);
-  camThumb.lookAt(0, 0, 0);
+  previewCamera.position.set(0, fitDist, fitDist * 1.2);
+  previewCamera.lookAt(0, 0, 0);
 
-  previewRenderer.render(sceneThumb, camThumb);
+  previewRenderer.render(previewScene, previewCamera);
 
-  geomClone.dispose();
-  mat.dispose();
-  previewRenderer.dispose();
+  ctx.drawImage(previewRenderer.domElement, 0, 0, width, height);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1178,6 +1203,7 @@ function addPartInstance(partIndex, initialPosition = null) {
 
   mesh.castShadow = mesh.receiveShadow = true;
   placedPartsGroup.add(mesh);
+  registerMeshInstance(mesh);
 
   if (isFirst) {
     frameScene(false);
@@ -1191,34 +1217,62 @@ function addPartInstance(partIndex, initialPosition = null) {
 /* SCENE OBJECTS LIST                                                          */
 /* -------------------------------------------------------------------------- */
 
+function registerMeshInstance(mesh) {
+  const id = mesh?.userData?.instanceId;
+  if (!mesh || !mesh.isMesh || id == null) return;
+  instanceIdLookup.set(id, mesh);
+}
+
+function unregisterMeshInstance(mesh) {
+  const id = mesh?.userData?.instanceId;
+  if (id == null) return;
+  instanceIdLookup.delete(id);
+  sceneRowByInstanceId.delete(id);
+}
+
 function findMeshByInstanceId(id) {
   if (!id) return null;
-  return placedPartsGroup.children.find(
-    (child) => child.isMesh && child.userData.instanceId === id
-  ) || null;
+  return instanceIdLookup.get(id) ?? null;
+}
+
+function updateSceneObjectSelectionStyles() {
+  sceneRowByInstanceId.forEach((row, instanceId) => {
+    const mesh = instanceIdLookup.get(instanceId);
+    const isSelected = mesh ? selectedMeshes.has(mesh) : false;
+    row.classList.toggle('selected', isSelected);
+  });
 }
 
 function updateSceneObjectsList() {
   if (!sceneObjectsList) return;
-  sceneObjectsList.innerHTML = '';
+  sceneRowByInstanceId.clear();
 
-  const meshes = placedPartsGroup.children.filter(
-    (child) => child.isMesh && child.userData.partIndex != null
-  );
+  const meshes = [];
+  for (const child of placedPartsGroup.children) {
+    if (child.isMesh && child.userData.partIndex != null) {
+      meshes.push(child);
+    }
+  }
 
   if (!meshes.length) {
     const empty = document.createElement('div');
     empty.style.opacity = '0.7';
     empty.style.fontSize = '11px';
     empty.textContent = 'No objects in scene.';
-    sceneObjectsList.appendChild(empty);
+    sceneObjectsList.replaceChildren(empty);
     return;
   }
+
+  const fragment = document.createDocumentFragment();
 
   meshes.forEach((mesh, idx) => {
     const row = document.createElement('div');
     row.className = 'scene-object-row';
-    row.dataset.instanceId = mesh.userData.instanceId;
+    const instanceId = mesh.userData.instanceId;
+    if (instanceId != null) {
+      row.dataset.instanceId = instanceId.toString();
+      sceneRowByInstanceId.set(instanceId, row);
+    }
 
     const partName = partLibrary[mesh.userData.partIndex]?.name || 'Part';
     const nameSpan = document.createElement('span');
@@ -1248,8 +1302,11 @@ function updateSceneObjectsList() {
     const isSelected = selectedMeshes.has(mesh);
     if (isSelected) row.classList.add('selected');
 
-    sceneObjectsList.appendChild(row);
+    fragment.appendChild(row);
   });
+
+  sceneObjectsList.replaceChildren(fragment);
+  updateSceneObjectSelectionStyles();
 }
 
 // Delegate clicks for scene objects list
@@ -1290,6 +1347,7 @@ function deleteMeshInstance(mesh) {
   const wasSelected = selectedMeshes.has(mesh);
   if (wasSelected) selectedMeshes.delete(mesh);
 
+  unregisterMeshInstance(mesh);
   mesh.geometry?.dispose();
   placedPartsGroup.remove(mesh);
 
@@ -1324,6 +1382,7 @@ function duplicateMeshInstance(mesh) {
 
   clone.castShadow = clone.receiveShadow = true;
   placedPartsGroup.add(clone);
+  registerMeshInstance(clone);
 
   clearSelection();
   selectedMeshes.add(clone);
@@ -1483,6 +1542,7 @@ function deleteSelected() {
   const toDelete = Array.from(selectedMeshes);
   clearSelection();
   toDelete.forEach((mesh) => {
+    unregisterMeshInstance(mesh);
     mesh.geometry?.dispose();
     placedPartsGroup.remove(mesh);
   });
