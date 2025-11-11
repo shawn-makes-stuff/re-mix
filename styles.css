@@ -112,7 +112,7 @@ body {
 
 #advancedPanel {
   display: none;
-  height: 360px; /* start tall enough to show full transform controls */
+  height: 435px; /* start tall enough to show full transform controls */
 }
 
 /* Vertical resize handles for panels */
