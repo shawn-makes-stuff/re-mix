@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js';
 import { FBXLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/FBXLoader.js';
 import { STLExporter } from 'https://unpkg.com/three@0.165.0/examples/jsm/exporters/STLExporter.js';
+import { STLLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/STLLoader.js';
 import { TransformControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/TransformControls.js';
 
 /* -------------------------------------------------------------------------- */
@@ -113,6 +114,7 @@ let historyIndex = -1;
 let nextInstanceId = 1;
 
 const loader = new FBXLoader();
+const stlLoader = new STLLoader();
 const exporter = new STLExporter();
 
 const dragPreviewMaterial = new THREE.MeshBasicMaterial({
@@ -651,42 +653,94 @@ undoButton.addEventListener('click', undo);
 
 importBtn.addEventListener('click', () => fileInput.click());
 
-fileInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+fileInput.addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files ?? []);
+  if (!files.length) return;
 
-  fileNameLabel.textContent = file.name;
+  fileNameLabel.textContent =
+    files.length === 1 ? files[0].name : `${files.length} files selected`;
 
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const arrayBuffer = ev.target.result;
+  partLibrary.length = 0;
+  clearPlacedParts();
+  resetHistory();
+  updatePartsListUI();
+  updateSceneObjectsList();
 
-    partLibrary.length = 0;
-    clearPlacedParts();
-    resetHistory();
-    updatePartsListUI();
-    updateSceneObjectsList();
+  let loadedAny = false;
+  const failedFiles = [];
 
-    try {
-      const root = loader.parse(arrayBuffer, '');
-      extractPartsFromObject(root);
-      disposeObject(root);
-    } catch (err) {
-      console.error(err);
-      alert('Could not load FBX.');
-      return;
+  for (const file of files) {
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (!extension || !['fbx', 'stl'].includes(extension)) {
+      failedFiles.push(file.name);
+      continue;
     }
 
+    const beforeCount = partLibrary.length;
+    let arrayBuffer;
+    try {
+      arrayBuffer = await file.arrayBuffer();
+    } catch (err) {
+      console.error(err);
+      failedFiles.push(file.name);
+      continue;
+    }
+
+    try {
+      if (extension === 'fbx') {
+        const root = loader.parse(arrayBuffer, '');
+        extractPartsFromObject(root);
+        disposeObject(root);
+        if (partLibrary.length > beforeCount) {
+          loadedAny = true;
+        } else {
+          failedFiles.push(file.name);
+        }
+      } else if (extension === 'stl') {
+        const geometry = stlLoader.parse(arrayBuffer);
+        if (!geometry.attributes.normal) geometry.computeVertexNormals();
+
+        const baseName = file.name.replace(/\.[^.]*$/u, '') ||
+          `Part ${partLibrary.length + 1}`;
+
+        partLibrary.push({
+          name: baseName,
+          geometry,
+          category: null
+        });
+        loadedAny = true;
+      }
+    } catch (err) {
+      console.error(err);
+      failedFiles.push(file.name);
+    }
+  }
+
+  if (!loadedAny) {
     updatePartsListUI();
-    pushHistory(); // initial empty layout
-    frameScene(true);
-  };
-  reader.readAsArrayBuffer(file);
+    updateSceneObjectsList();
+    if (failedFiles.length) {
+      const uniqueFailures = [...new Set(failedFiles)];
+      alert(`Could not load: ${uniqueFailures.join(', ')}`);
+    }
+    fileInput.value = '';
+    return;
+  }
+
+  updatePartsListUI();
+  pushHistory(); // initial empty layout
+  frameScene(true);
+
+  if (failedFiles.length) {
+    const uniqueFailures = [...new Set(failedFiles)];
+    alert(`Some files could not be loaded: ${uniqueFailures.join(', ')}`);
+  }
+
+  fileInput.value = '';
 });
 
 function extractPartsFromObject(root) {
   root.updateMatrixWorld(true);
-  partLibrary.length = 0;
 
   root.traverse((child) => {
     if (!child.isMesh || !child.geometry) return;
@@ -1695,7 +1749,21 @@ exportStlBtn.addEventListener('click', () => {
 
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'dungeon_tile.stl';
+  const defaultName = 'layout';
+  const inputName = prompt('Enter a name for the exported STL file:', defaultName);
+  if (inputName === null) {
+    URL.revokeObjectURL(url);
+    return;
+  }
+
+  const trimmed = inputName.trim() || defaultName;
+  let sanitizedBase = trimmed
+    .replace(/\.stl$/iu, '')
+    .replace(/[\\/:*?"<>|]/g, '_');
+  if (!sanitizedBase) {
+    sanitizedBase = defaultName;
+  }
+  a.download = `${sanitizedBase}.stl`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
