@@ -265,7 +265,7 @@
         <div class="help-section-title">Files</div>
         <div class="help-grid">
           <div class="help-key">Import Parts</div>
-          <div class="help-desc">Load a multi-part FBX library</div>
+          <div class="help-desc">Load FBX or STL part files</div>
           <div class="help-key">Export STL</div>
           <div class="help-desc">Export the current layout as STL</div>
         </div>
@@ -277,7 +277,13 @@
 
   <!-- Main view -->
   <div id="viewer"></div>
-  <input type="file" id="fileInput" accept=".fbx" style="display:none" />
+  <input
+    type="file"
+    id="fileInput"
+    accept=".fbx,.stl"
+    multiple
+    style="display:none"
+  />
 
   <script type="importmap">
   {
