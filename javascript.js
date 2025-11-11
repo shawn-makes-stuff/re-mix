@@ -393,6 +393,16 @@ function updateBottomControlsVisibility() {
   if (rotateLeftBtn) rotateLeftBtn.disabled = !hasSelection;
   if (rotateRightBtn) rotateRightBtn.disabled = !hasSelection;
 
+  if (rotationModeBtn) {
+    const multiSelection = selectedMeshes.size > 1;
+    const allowLocalRotation = hasSelection && !multiSelection;
+    rotationModeBtn.disabled = !allowLocalRotation;
+    if (multiSelection && !rotateAroundWorld) {
+      rotateAroundWorld = true;
+    }
+    updateRotationModeUi();
+  }
+
   if (moveModeBtn) moveModeBtn.disabled = !hasSelection;
   if (rotateModeBtn) rotateModeBtn.disabled = !hasSelection;
   if (scaleModeBtn) scaleModeBtn.disabled = !hasSelection;
@@ -1678,7 +1688,7 @@ function rotateSelectedPart(deltaSteps) {
 }
 
 function rotateSelectedPartAroundCenter(deltaSteps) {
-  if (selectedMeshes.size === 0) return;
+  if (selectedMeshes.size !== 1) return;
 
   const angle = deltaSteps * (Math.PI / 2);
 
@@ -1697,27 +1707,44 @@ function rotateSelectedPartAroundCenter(deltaSteps) {
   pushHistory();
 }
 
-rotationModeBtn.addEventListener('click', () => {
-  rotateAroundWorld = !rotateAroundWorld;
+function updateRotationModeUi() {
+  if (!rotationModeBtn) return;
   rotationModeBtn.classList.toggle('active', !rotateAroundWorld);
 
-  if (rotateAroundWorld) {
-    rotationModeBtn.title = 'Rotation mode: World';
-    rotationModeIcon.textContent = 'public';
+  if (rotationModeIcon) {
+    rotationModeIcon.textContent = rotateAroundWorld ? 'public' : 'view_in_ar';
+  }
+
+  rotationModeBtn.title = rotateAroundWorld
+    ? 'Rotation mode: World'
+    : 'Rotation mode: Object';
+}
+
+if (rotationModeBtn) {
+  rotationModeBtn.addEventListener('click', () => {
+    rotateAroundWorld = !rotateAroundWorld;
+    updateRotationModeUi();
+  });
+}
+
+updateRotationModeUi();
+
+rotateLeftBtn.addEventListener('click', () => {
+  if (selectedMeshes.size === 0) return;
+  if (!rotateAroundWorld && selectedMeshes.size === 1) {
+    rotateSelectedPartAroundCenter(-1);
   } else {
-    rotationModeBtn.title = 'Rotation mode: Object';
-    rotationModeIcon.textContent = 'view_in_ar';
+    rotateSelectedPart(-1);
   }
 });
 
-rotateLeftBtn.addEventListener('click', () => {
-  if (rotateAroundWorld) rotateSelectedPart(-1);
-  else rotateSelectedPartAroundCenter(-1);
-});
-
 rotateRightBtn.addEventListener('click', () => {
-  if (rotateAroundWorld) rotateSelectedPart(1);
-  else rotateSelectedPartAroundCenter(1);
+  if (selectedMeshes.size === 0) return;
+  if (!rotateAroundWorld && selectedMeshes.size === 1) {
+    rotateSelectedPartAroundCenter(1);
+  } else {
+    rotateSelectedPart(1);
+  }
 });
 
 if (gridSnapBtn) {
