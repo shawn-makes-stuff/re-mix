@@ -118,7 +118,11 @@ const sceneRowByInstanceId = new Map();
 const loader = new FBXLoader();
 const stlLoader = new STLLoader();
 
-const previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+const previewRenderer = new THREE.WebGLRenderer({
+  antialias: true,
+  alpha: true,
+  preserveDrawingBuffer: true
+});
 previewRenderer.setPixelRatio(window.devicePixelRatio);
 previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
 previewRenderer.setClearColor(0x111111, 1);
@@ -1002,16 +1006,25 @@ function updatePartsListUI() {
 function renderPartPreview(geometry, canvas) {
   if (!geometry || !canvas) return;
 
-  const width = canvas.width;
-  const height = canvas.height;
-  if (!(width > 0 && height > 0)) return;
+  const displayWidth = canvas.clientWidth || canvas.width;
+  const displayHeight = canvas.clientHeight || canvas.height;
+  if (!(displayWidth > 0 && displayHeight > 0)) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(displayWidth * dpr));
+  const height = Math.max(1, Math.round(displayHeight * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#111111';
   ctx.fillRect(0, 0, width, height);
 
-  const dpr = window.devicePixelRatio || 1;
   previewRenderer.setPixelRatio(dpr);
   previewRenderer.setSize(width, height, false);
 
@@ -1049,6 +1062,8 @@ function renderPartPreview(geometry, canvas) {
   previewCamera.position.set(0, fitDist, fitDist * 1.2);
   previewCamera.lookAt(0, 0, 0);
 
+  previewRenderer.setRenderTarget(null);
+  previewRenderer.clear(true, true, true);
   previewRenderer.render(previewScene, previewCamera);
 
   ctx.drawImage(previewRenderer.domElement, 0, 0, width, height);
