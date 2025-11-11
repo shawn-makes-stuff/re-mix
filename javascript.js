@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js';
 import { FBXLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/FBXLoader.js';
-import { STLExporter } from 'https://unpkg.com/three@0.165.0/examples/jsm/exporters/STLExporter.js';
 import { STLLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/STLLoader.js';
 import { TransformControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/TransformControls.js';
 
@@ -115,7 +114,6 @@ let nextInstanceId = 1;
 
 const loader = new FBXLoader();
 const stlLoader = new STLLoader();
-const exporter = new STLExporter();
 
 const dragPreviewMaterial = new THREE.MeshBasicMaterial({
   color: 0xffffff,
@@ -1729,6 +1727,157 @@ function frameScene() {
 /* STL EXPORT                                                                  */
 /* -------------------------------------------------------------------------- */
 
+const STL_CHUNK_TRIANGLE_CAPACITY = 16384;
+const MAX_STL_BYTES = 1.5 * 1024 * 1024 * 1024; // 1.5 GB safety cap
+
+function createStlBlobFromGroup(group) {
+  const header = new ArrayBuffer(84);
+  const headerView = new DataView(header);
+
+  const chunks = [];
+  let chunkBuffer = new ArrayBuffer(STL_CHUNK_TRIANGLE_CAPACITY * 50);
+  let chunkView = new DataView(chunkBuffer);
+  let chunkOffset = 0;
+
+  function flushChunk() {
+    if (chunkOffset === 0) return;
+    chunks.push(chunkBuffer.slice(0, chunkOffset));
+    chunkBuffer = new ArrayBuffer(STL_CHUNK_TRIANGLE_CAPACITY * 50);
+    chunkView = new DataView(chunkBuffer);
+    chunkOffset = 0;
+  }
+
+  function ensureChunkSpace(bytes) {
+    if (chunkOffset + bytes > chunkBuffer.byteLength) {
+      flushChunk();
+    }
+  }
+
+  const vA = new THREE.Vector3();
+  const vB = new THREE.Vector3();
+  const vC = new THREE.Vector3();
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+
+  const matrixWorld = new THREE.Matrix4();
+
+  let triangleCount = 0;
+
+  const writeTriangle = (a, b, c, n) => {
+    ensureChunkSpace(50);
+    const offset = chunkOffset;
+
+    chunkView.setFloat32(offset, n.x, true);
+    chunkView.setFloat32(offset + 4, n.y, true);
+    chunkView.setFloat32(offset + 8, n.z, true);
+
+    chunkView.setFloat32(offset + 12, a.x, true);
+    chunkView.setFloat32(offset + 16, a.y, true);
+    chunkView.setFloat32(offset + 20, a.z, true);
+
+    chunkView.setFloat32(offset + 24, b.x, true);
+    chunkView.setFloat32(offset + 28, b.y, true);
+    chunkView.setFloat32(offset + 32, b.z, true);
+
+    chunkView.setFloat32(offset + 36, c.x, true);
+    chunkView.setFloat32(offset + 40, c.y, true);
+    chunkView.setFloat32(offset + 44, c.z, true);
+
+    chunkView.setUint16(offset + 48, 0, true);
+
+    chunkOffset += 50;
+    triangleCount += 1;
+  };
+
+  const writeFromIndices = (position, indexAttribute, matrix) => {
+    const triCount = indexAttribute.count - (indexAttribute.count % 3);
+    for (let i = 0; i < triCount; i += 3) {
+      const aIndex = indexAttribute.getX(i);
+      const bIndex = indexAttribute.getX(i + 1);
+      const cIndex = indexAttribute.getX(i + 2);
+
+      vA.fromBufferAttribute(position, aIndex).applyMatrix4(matrix);
+      vB.fromBufferAttribute(position, bIndex).applyMatrix4(matrix);
+      vC.fromBufferAttribute(position, cIndex).applyMatrix4(matrix);
+
+      e1.subVectors(vB, vA);
+      e2.subVectors(vC, vA);
+      normal.crossVectors(e1, e2);
+
+      if (normal.lengthSq() === 0) {
+        continue;
+      }
+
+      normal.normalize();
+
+      writeTriangle(vA, vB, vC, normal);
+    }
+  };
+
+  group.traverse((child) => {
+    if (!child.isMesh || !child.visible) return;
+
+    const geometry = child.geometry;
+    if (!geometry || !geometry.attributes || !geometry.attributes.position) {
+      return;
+    }
+
+    const position = geometry.attributes.position;
+    if (position.itemSize !== 3) {
+      return;
+    }
+
+    matrixWorld.copy(child.matrixWorld);
+
+    if (geometry.index) {
+      writeFromIndices(position, geometry.index, matrixWorld);
+    } else {
+      const count = position.count;
+      for (let i = 0; i < count; i += 3) {
+        vA.fromBufferAttribute(position, i).applyMatrix4(matrixWorld);
+        vB.fromBufferAttribute(position, i + 1).applyMatrix4(matrixWorld);
+        vC.fromBufferAttribute(position, i + 2).applyMatrix4(matrixWorld);
+
+        e1.subVectors(vB, vA);
+        e2.subVectors(vC, vA);
+        normal.crossVectors(e1, e2);
+
+        if (normal.lengthSq() === 0) {
+          continue;
+        }
+
+        normal.normalize();
+
+        writeTriangle(vA, vB, vC, normal);
+      }
+    }
+  });
+
+  flushChunk();
+
+  if (triangleCount === 0) {
+    return { blob: null, reason: 'empty' };
+  }
+
+  if (triangleCount > 0xffffffff) {
+    return { blob: null, reason: 'tooManyTriangles', triangleCount };
+  }
+
+  const totalBytes = 84 + triangleCount * 50;
+  if (totalBytes > MAX_STL_BYTES) {
+    return { blob: null, reason: 'fileTooLarge', triangleCount, bytes: totalBytes };
+  }
+
+  headerView.setUint32(80, triangleCount, true);
+
+  return {
+    blob: new Blob([header, ...chunks], { type: 'application/octet-stream' }),
+    triangleCount,
+    bytes: totalBytes
+  };
+}
+
 // --- STL export ---
 exportStlBtn.addEventListener('click', () => {
   if (placedPartsGroup.children.length === 0) {
@@ -1736,15 +1885,27 @@ exportStlBtn.addEventListener('click', () => {
     return;
   }
 
-  // Clone the whole layout and rotate it 90° around X for export
   const exportGroup = placedPartsGroup.clone(true);
-  exportGroup.rotation.x = Math.PI / 2; // 90° around X
+  exportGroup.rotation.x = Math.PI / 2;
   exportGroup.updateMatrixWorld(true);
 
-  const stlString = exporter.parse(exportGroup);
-
-  const blob = new Blob([stlString], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
+  const result = createStlBlobFromGroup(exportGroup);
+  if (!result || !result.blob) {
+    let message = 'Failed to export STL. Please ensure the layout contains valid geometry.';
+    if (result) {
+      if (result.reason === 'fileTooLarge') {
+        const approxMb = (result.bytes / (1024 * 1024)).toFixed(1);
+        message = `The exported STL would be approximately ${approxMb} MB, which is too large to generate in the browser. Try removing or simplifying some parts before exporting.`;
+      } else if (result.reason === 'tooManyTriangles') {
+        message = 'The layout has more triangles than the STL format supports. Try simplifying the scene before exporting.';
+      } else if (result.reason === 'empty') {
+        message = 'Unable to export because no valid geometry was found.';
+      }
+    }
+    alert(message);
+    return;
+  }
+  const url = URL.createObjectURL(result.blob);
 
   const a = document.createElement('a');
   a.href = url;
