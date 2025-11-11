@@ -150,6 +150,8 @@ let nextInstanceId = 1;
 const instanceIdLookup = new Map();
 const sceneRowByInstanceId = new Map();
 
+let clipboardSelection = null;
+
 const loader = new FBXLoader();
 const stlLoader = new STLLoader();
 
@@ -2240,6 +2242,105 @@ function deleteSelected() {
   pushHistory();
 }
 
+function disposeClipboardSelection() {
+  if (!clipboardSelection) return;
+  clipboardSelection.items.forEach((item) => {
+    item.geometry?.dispose();
+  });
+  clipboardSelection = null;
+}
+
+function copySelectionToClipboard() {
+  if (selectedMeshes.size === 0) return false;
+
+  const items = [];
+  selectedMeshes.forEach((mesh) => {
+    if (!mesh?.isMesh || mesh.userData.partIndex == null) return;
+
+    const geometrySnapshot = mesh.geometry.clone();
+    items.push({
+      geometry: geometrySnapshot,
+      position: mesh.position.toArray(),
+      quaternion: mesh.quaternion.toArray(),
+      scale: mesh.scale.toArray(),
+      userData: {
+        partIndex: mesh.userData.partIndex,
+        rotationSteps: mesh.userData.rotationSteps ?? 0,
+        pivotCentered: !!mesh.userData.pivotCentered
+      }
+    });
+  });
+
+  if (!items.length) return false;
+
+  disposeClipboardSelection();
+  clipboardSelection = { items };
+  return true;
+}
+
+function pasteClipboardSelection() {
+  if (!clipboardSelection || clipboardSelection.items.length === 0) {
+    return false;
+  }
+
+  selectedMeshes.forEach((mesh) => setMeshHighlight(mesh, false));
+  selectedMeshes.clear();
+  resetMultiSelectionTransformState();
+
+  const newMeshes = [];
+  const snapSelection = gridSnapEnabled && clipboardSelection.items.length === 1;
+
+  clipboardSelection.items.forEach((item) => {
+    if (!item?.geometry) return;
+
+    const position = item.position ?? [0, 0, 0];
+    const quaternion = item.quaternion ?? [0, 0, 0, 1];
+    const scale = item.scale ?? [1, 1, 1];
+    const userData = item.userData ?? {};
+    if (userData.partIndex == null) return;
+
+    const geomClone = item.geometry.clone();
+    const mesh = new THREE.Mesh(geomClone, normalMaterial);
+    mesh.position.fromArray(position);
+    mesh.quaternion.fromArray(quaternion);
+    mesh.scale.fromArray(scale);
+    mesh.userData = {
+      partIndex: userData.partIndex,
+      rotationSteps: userData.rotationSteps ?? 0,
+      pivotCentered: !!userData.pivotCentered,
+      instanceId: nextInstanceId++
+    };
+
+    mesh.castShadow = mesh.receiveShadow = true;
+
+    if (snapSelection) {
+      applyGridSnap(mesh);
+    }
+
+    placedPartsGroup.add(mesh);
+    registerMeshInstance(mesh);
+    mesh.updateMatrixWorld(true);
+    selectedMeshes.add(mesh);
+    setMeshHighlight(mesh, true);
+    newMeshes.push(mesh);
+  });
+
+  if (!newMeshes.length) {
+    updateBottomControlsVisibility();
+    updateTransformControls();
+    syncAdvancedPanelFromSelection();
+    return false;
+  }
+
+  updateSceneObjectsList();
+  updateBottomControlsVisibility();
+  updateTransformControls();
+  syncAdvancedPanelFromSelection();
+  pushHistory();
+
+  return true;
+}
+
 /* -------------------------------------------------------------------------- */
 /* ADVANCED MODE & PANEL                                                       */
 /* -------------------------------------------------------------------------- */
@@ -2461,6 +2562,20 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'y' || e.key === 'Y') {
       e.preventDefault();
       redo();
+      return;
+    }
+    if (e.key === 'c' || e.key === 'C') {
+      const copied = copySelectionToClipboard();
+      if (copied) {
+        e.preventDefault();
+      }
+      return;
+    }
+    if (e.key === 'v' || e.key === 'V') {
+      const pasted = pasteClipboardSelection();
+      if (pasted) {
+        e.preventDefault();
+      }
       return;
     }
   }
