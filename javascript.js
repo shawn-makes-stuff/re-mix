@@ -112,6 +112,9 @@ let history = [];
 let historyIndex = -1;
 let nextInstanceId = 1;
 
+const instanceIdLookup = new Map();
+const sceneRowByInstanceId = new Map();
+
 const loader = new FBXLoader();
 const stlLoader = new STLLoader();
 
@@ -377,12 +380,7 @@ function updateBottomControlsVisibility() {
 
   // Update rows highlight in scene objects list
   if (sceneObjectsList) {
-    [...sceneObjectsList.querySelectorAll('.scene-object-row')].forEach((row) => {
-      const id = Number(row.dataset.instanceId);
-      const mesh = findMeshByInstanceId(id);
-      const isSelected = mesh && selectedMeshes.has(mesh);
-      row.classList.toggle('selected', isSelected);
-    });
+    updateSceneObjectSelectionStyles();
   }
 }
 
@@ -549,6 +547,8 @@ function clearPlacedParts() {
     child.geometry?.dispose();
   });
   placedPartsGroup.clear();
+  instanceIdLookup.clear();
+  sceneRowByInstanceId.clear();
   clearSelection();
 }
 
@@ -599,6 +599,7 @@ function loadState(state) {
 
     mesh.castShadow = mesh.receiveShadow = true;
     placedPartsGroup.add(mesh);
+    registerMeshInstance(mesh);
   });
 
   nextInstanceId = Math.max(nextInstanceId, maxInstanceId + 1);
@@ -1178,6 +1179,7 @@ function addPartInstance(partIndex, initialPosition = null) {
 
   mesh.castShadow = mesh.receiveShadow = true;
   placedPartsGroup.add(mesh);
+  registerMeshInstance(mesh);
 
   if (isFirst) {
     frameScene(false);
@@ -1191,34 +1193,62 @@ function addPartInstance(partIndex, initialPosition = null) {
 /* SCENE OBJECTS LIST                                                          */
 /* -------------------------------------------------------------------------- */
 
+function registerMeshInstance(mesh) {
+  const id = mesh?.userData?.instanceId;
+  if (!mesh || !mesh.isMesh || id == null) return;
+  instanceIdLookup.set(id, mesh);
+}
+
+function unregisterMeshInstance(mesh) {
+  const id = mesh?.userData?.instanceId;
+  if (id == null) return;
+  instanceIdLookup.delete(id);
+  sceneRowByInstanceId.delete(id);
+}
+
 function findMeshByInstanceId(id) {
   if (!id) return null;
-  return placedPartsGroup.children.find(
-    (child) => child.isMesh && child.userData.instanceId === id
-  ) || null;
+  return instanceIdLookup.get(id) ?? null;
+}
+
+function updateSceneObjectSelectionStyles() {
+  sceneRowByInstanceId.forEach((row, instanceId) => {
+    const mesh = instanceIdLookup.get(instanceId);
+    const isSelected = mesh ? selectedMeshes.has(mesh) : false;
+    row.classList.toggle('selected', isSelected);
+  });
 }
 
 function updateSceneObjectsList() {
   if (!sceneObjectsList) return;
-  sceneObjectsList.innerHTML = '';
+  sceneRowByInstanceId.clear();
 
-  const meshes = placedPartsGroup.children.filter(
-    (child) => child.isMesh && child.userData.partIndex != null
-  );
+  const meshes = [];
+  for (const child of placedPartsGroup.children) {
+    if (child.isMesh && child.userData.partIndex != null) {
+      meshes.push(child);
+    }
+  }
 
   if (!meshes.length) {
     const empty = document.createElement('div');
     empty.style.opacity = '0.7';
     empty.style.fontSize = '11px';
     empty.textContent = 'No objects in scene.';
-    sceneObjectsList.appendChild(empty);
+    sceneObjectsList.replaceChildren(empty);
     return;
   }
+
+  const fragment = document.createDocumentFragment();
 
   meshes.forEach((mesh, idx) => {
     const row = document.createElement('div');
     row.className = 'scene-object-row';
-    row.dataset.instanceId = mesh.userData.instanceId;
+    const instanceId = mesh.userData.instanceId;
+    if (instanceId != null) {
+      row.dataset.instanceId = instanceId.toString();
+      sceneRowByInstanceId.set(instanceId, row);
+    }
 
     const partName = partLibrary[mesh.userData.partIndex]?.name || 'Part';
     const nameSpan = document.createElement('span');
@@ -1248,8 +1278,11 @@ function updateSceneObjectsList() {
     const isSelected = selectedMeshes.has(mesh);
     if (isSelected) row.classList.add('selected');
 
-    sceneObjectsList.appendChild(row);
+    fragment.appendChild(row);
   });
+
+  sceneObjectsList.replaceChildren(fragment);
+  updateSceneObjectSelectionStyles();
 }
 
 // Delegate clicks for scene objects list
@@ -1290,6 +1323,7 @@ function deleteMeshInstance(mesh) {
   const wasSelected = selectedMeshes.has(mesh);
   if (wasSelected) selectedMeshes.delete(mesh);
 
+  unregisterMeshInstance(mesh);
   mesh.geometry?.dispose();
   placedPartsGroup.remove(mesh);
 
@@ -1324,6 +1358,7 @@ function duplicateMeshInstance(mesh) {
 
   clone.castShadow = clone.receiveShadow = true;
   placedPartsGroup.add(clone);
+  registerMeshInstance(clone);
 
   clearSelection();
   selectedMeshes.add(clone);
@@ -1483,6 +1518,7 @@ function deleteSelected() {
   const toDelete = Array.from(selectedMeshes);
   clearSelection();
   toDelete.forEach((mesh) => {
+    unregisterMeshInstance(mesh);
     mesh.geometry?.dispose();
     placedPartsGroup.remove(mesh);
   });
