@@ -73,6 +73,10 @@ const flipButtons = [
   { btn: flipZBtn, axis: 'z' }
 ].filter(({ btn }) => !!btn);
 
+flipButtons.forEach(({ btn }) => {
+  btn.setAttribute('aria-pressed', 'false');
+});
+
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
 const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -1588,9 +1592,11 @@ function syncAdvancedPanelFromSelection() {
 
   inputs.forEach((el) => { el.disabled = !hasSingle || !isAdvancedMode; });
   flipButtons.forEach(({ btn }) => {
-    btn.disabled = !hasSingle || !isAdvancedMode;
-    if (!hasSingle || !isAdvancedMode) {
+    const disabled = !hasSingle || !isAdvancedMode;
+    btn.disabled = disabled;
+    if (disabled) {
       btn.classList.remove('active');
+      btn.setAttribute('aria-pressed', 'false');
     }
   });
 
@@ -1626,7 +1632,9 @@ function syncAdvancedPanelFromSelection() {
   scaleZInput.value = mesh.scale.z.toFixed(3);
 
   flipButtons.forEach(({ btn, axis }) => {
-    btn.classList.toggle('active', mesh.scale[axis] < 0);
+    const isFlipped = mesh.scale[axis] < 0;
+    btn.classList.toggle('active', isFlipped);
+    btn.setAttribute('aria-pressed', isFlipped ? 'true' : 'false');
   });
 }
 
@@ -1679,6 +1687,12 @@ function flipSelectedAxis(axis) {
   const mesh = [...selectedMeshes][0];
   const flipped = -mesh.scale[axis];
   mesh.scale[axis] = Object.is(flipped, -0) ? 0 : flipped;
+  const entry = flipButtons.find((item) => item.axis === axis);
+  if (entry?.btn) {
+    const isFlipped = mesh.scale[axis] < 0;
+    entry.btn.classList.toggle('active', isFlipped);
+    entry.btn.setAttribute('aria-pressed', isFlipped ? 'true' : 'false');
+  }
   updateSceneObjectsList();
   syncAdvancedPanelFromSelection();
   updateTransformControls();

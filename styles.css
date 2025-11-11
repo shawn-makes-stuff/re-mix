@@ -447,8 +447,8 @@ body {
 }
 
 .flip-toggle.active {
-  background: rgba(45, 45, 45, 0.95);
-  border-color: var(--accent-soft);
+  background: rgba(78, 161, 255, 0.16);
+  border-color: var(--accent);
   color: var(--accent);
 }
 
