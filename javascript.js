@@ -383,7 +383,7 @@ const measurementGroup = new THREE.Group();
 scene.add(measurementGroup);
 
 const measurementLineMaterial = new THREE.LineBasicMaterial({
-  color: 0x4caf50,
+  color: 0x4ea1ff,
   transparent: true,
   opacity: 0.95,
   depthTest: false,
@@ -391,7 +391,7 @@ const measurementLineMaterial = new THREE.LineBasicMaterial({
 });
 
 const measurementHandleMaterial = new THREE.MeshBasicMaterial({
-  color: 0x4caf50,
+  color: 0x4ea1ff,
   transparent: true,
   opacity: 0.95,
   depthTest: false,
@@ -459,14 +459,14 @@ function updateMeasurementLabelTexture(label, text) {
   const { width, height } = canvas;
 
   context.clearRect(0, 0, width, height);
-  context.fillStyle = 'rgba(18, 18, 18, 0.72)';
-  context.fillRect(0, 0, width, height);
 
-  context.strokeStyle = 'rgba(76, 175, 80, 0.65)';
-  context.lineWidth = 6;
-  context.strokeRect(3, 3, width - 6, height - 6);
+  context.strokeStyle = 'rgba(78, 161, 255, 0.75)';
+  context.lineWidth = 5;
+  context.strokeRect(4, 4, width - 8, height - 8);
 
   context.fillStyle = '#f5f5f5';
+  context.shadowColor = 'rgba(0, 0, 0, 0.35)';
+  context.shadowBlur = 12;
   context.font = 'bold 60px sans-serif';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
@@ -479,6 +479,9 @@ function updateMeasurementLabelTexture(label, text) {
     context.fillText(line, width / 2, y);
     y += lineHeight;
   });
+
+  context.shadowBlur = 0;
+  context.shadowColor = 'transparent';
 
   label.texture.needsUpdate = true;
 }

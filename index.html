@@ -32,41 +32,43 @@
 
   <!-- Bottom controls: basic vs advanced -->
   <div id="bottomControls">
-    <!-- Basic controls -->
-    <div id="basicControls" class="controls-group">
-      <button id="rotateLeftBtn" class="icon-btn large" title="Rotate left">
-        <span class="material-symbols-outlined">rotate_left</span>
-      </button>
-      <button id="rotationModeBtn" class="icon-btn large" title="Rotation mode: World">
-        <span class="material-symbols-outlined" id="rotationModeIcon">public</span>
-      </button>
-      <button id="rotateRightBtn" class="icon-btn large" title="Rotate right">
-        <span class="material-symbols-outlined">rotate_right</span>
-      </button>
-    </div>
-
-    <!-- Advanced transform tools -->
-    <div id="advancedControls" class="controls-group">
-      <button id="moveModeBtn" class="icon-btn large" title="Move (G)">
-        <span class="material-symbols-outlined">open_with</span>
-      </button>
-      <button id="rotateModeBtn" class="icon-btn large" title="Rotate (R)">
-        <span class="material-symbols-outlined">cached</span>
-      </button>
-      <button id="scaleModeBtn" class="icon-btn large" title="Scale (S)">
-        <span class="material-symbols-outlined">zoom_out_map</span>
-      </button>
-      <button id="measureModeBtn" class="icon-btn large" title="Measure (M)">
-        <span class="material-symbols-outlined">straighten</span>
-      </button>
-    </div>
-
     <div id="measurementReadout" aria-live="polite"></div>
 
-    <div id="gridControls" class="controls-group">
-      <button id="gridSnapBtn" type="button" class="icon-btn large" title="Grid snapping">
-        <span class="material-symbols-outlined">grid_off</span>
-      </button>
+    <div id="controlsRow">
+      <!-- Basic controls -->
+      <div id="basicControls" class="controls-group">
+        <button id="rotateLeftBtn" class="icon-btn large" title="Rotate left">
+          <span class="material-symbols-outlined">rotate_left</span>
+        </button>
+        <button id="rotationModeBtn" class="icon-btn large" title="Rotation mode: World">
+          <span class="material-symbols-outlined" id="rotationModeIcon">public</span>
+        </button>
+        <button id="rotateRightBtn" class="icon-btn large" title="Rotate right">
+          <span class="material-symbols-outlined">rotate_right</span>
+        </button>
+      </div>
+
+      <!-- Advanced transform tools -->
+      <div id="advancedControls" class="controls-group">
+        <button id="moveModeBtn" class="icon-btn large" title="Move (G)">
+          <span class="material-symbols-outlined">open_with</span>
+        </button>
+        <button id="rotateModeBtn" class="icon-btn large" title="Rotate (R)">
+          <span class="material-symbols-outlined">cached</span>
+        </button>
+        <button id="scaleModeBtn" class="icon-btn large" title="Scale (S)">
+          <span class="material-symbols-outlined">zoom_out_map</span>
+        </button>
+        <button id="measureModeBtn" class="icon-btn large" title="Measure (M)">
+          <span class="material-symbols-outlined">straighten</span>
+        </button>
+      </div>
+
+      <div id="gridControls" class="controls-group">
+        <button id="gridSnapBtn" type="button" class="icon-btn large" title="Grid snapping">
+          <span class="material-symbols-outlined">grid_off</span>
+        </button>
+      </div>
     </div>
   </div>
 
