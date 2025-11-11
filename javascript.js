@@ -657,14 +657,10 @@ fileInput.addEventListener('change', async (e) => {
   const files = Array.from(e.target.files ?? []);
   if (!files.length) return;
 
+  const startingLibrarySize = partLibrary.length;
+
   fileNameLabel.textContent =
     files.length === 1 ? files[0].name : `${files.length} files selected`;
-
-  partLibrary.length = 0;
-  clearPlacedParts();
-  resetHistory();
-  updatePartsListUI();
-  updateSceneObjectsList();
 
   let loadedAny = false;
   const failedFiles = [];
@@ -728,8 +724,11 @@ fileInput.addEventListener('change', async (e) => {
   }
 
   updatePartsListUI();
-  pushHistory(); // initial empty layout
-  frameScene(true);
+
+  if (startingLibrarySize === 0) {
+    updateSceneObjectsList();
+    frameScene(true);
+  }
 
   if (failedFiles.length) {
     const uniqueFailures = [...new Set(failedFiles)];
