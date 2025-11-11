@@ -437,7 +437,13 @@ function centerMeshPivot(mesh) {
   const center = new THREE.Vector3();
   box.getCenter(center);
   geom.translate(-center.x, -center.y, -center.z);
-  mesh.position.add(center);
+
+  const offset = center
+    .clone()
+    .multiply(mesh.scale)
+    .applyQuaternion(mesh.quaternion);
+
+  mesh.position.add(offset);
   mesh.userData.pivotCentered = true;
 }
 
