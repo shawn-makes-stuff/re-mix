@@ -118,37 +118,6 @@ const sceneRowByInstanceId = new Map();
 const loader = new FBXLoader();
 const stlLoader = new STLLoader();
 
-const previewRenderer = new THREE.WebGLRenderer({
-  antialias: true,
-  alpha: true,
-  preserveDrawingBuffer: true
-});
-previewRenderer.setPixelRatio(window.devicePixelRatio);
-previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
-previewRenderer.setClearColor(0x111111, 1);
-
-const previewScene = new THREE.Scene();
-previewScene.background = new THREE.Color(0x111111);
-const previewCamera = new THREE.PerspectiveCamera(30, 1, 0.01, 50);
-const previewLight = new THREE.DirectionalLight(0xffffff, 1.0);
-previewLight.position.set(5, 10, 7);
-previewScene.add(previewLight);
-previewScene.add(new THREE.AmbientLight(0xffffff, 0.4));
-
-const previewMeshGroup = new THREE.Group();
-previewScene.add(previewMeshGroup);
-
-const previewMaterial = new THREE.MeshStandardMaterial({
-  color: 0xaaaaaa,
-  roughness: 0.8,
-  metalness: 0.2
-});
-
-let previewMeshInstance = null;
-const previewBox = new THREE.Box3();
-const previewSize = new THREE.Vector3();
-const previewCenter = new THREE.Vector3();
-
 const dragPreviewMaterial = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   opacity: 0.35,
@@ -1004,69 +973,61 @@ function updatePartsListUI() {
 }
 
 function renderPartPreview(geometry, canvas) {
-  if (!geometry || !canvas) return;
+  const w = canvas.width;
+  const h = canvas.height;
 
-  const displayWidth = canvas.clientWidth || canvas.width;
-  const displayHeight = canvas.clientHeight || canvas.height;
-  if (!(displayWidth > 0 && displayHeight > 0)) return;
+  const previewRenderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    alpha: true
+  });
+  previewRenderer.setSize(w, h, false);
+  previewRenderer.setPixelRatio(window.devicePixelRatio);
+  previewRenderer.setClearColor(0x111111, 1);
 
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(1, Math.round(displayWidth * dpr));
-  const height = Math.max(1, Math.round(displayHeight * dpr));
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
+  const sceneThumb = new THREE.Scene();
+  const camThumb = new THREE.PerspectiveCamera(30, w / h, 0.01, 50);
 
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#111111';
-  ctx.fillRect(0, 0, width, height);
+  const light = new THREE.DirectionalLight(0xffffff, 1.0);
+  light.position.set(5, 10, 7);
+  sceneThumb.add(light);
+  sceneThumb.add(new THREE.AmbientLight(0xffffff, 0.4));
 
-  previewRenderer.setPixelRatio(dpr);
-  previewRenderer.setSize(displayWidth, displayHeight, false);
+  const geomClone = geometry.clone();
+  const posAttr = geomClone.getAttribute('position');
+  const box = new THREE.Box3().setFromBufferAttribute(posAttr);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
 
-  previewCamera.aspect = width / height;
-  previewCamera.updateProjectionMatrix();
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const scale = 1 / maxDim;
+  geomClone.scale(scale, scale, scale);
 
-  if (!previewMeshInstance) {
-    previewMeshInstance = new THREE.Mesh(geometry, previewMaterial);
-    previewMeshGroup.add(previewMeshInstance);
-  } else {
-    previewMeshInstance.geometry = geometry;
-  }
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xaaaaaa,
+    roughness: 0.8,
+    metalness: 0.2
+  });
+  const mesh = new THREE.Mesh(geomClone, mat);
 
-  previewMeshInstance.position.set(0, 0, 0);
-  previewMeshInstance.rotation.set(0, 0, 0);
-  previewMeshInstance.scale.set(1, 1, 1);
+  const box2 = new THREE.Box3().setFromObject(mesh);
+  const center2 = new THREE.Vector3();
+  box2.getCenter(center2);
+  mesh.position.sub(center2);
 
-  if (!geometry.boundingBox) {
-    geometry.computeBoundingBox();
-  }
-
-  const boundingBox = geometry.boundingBox;
-  if (!boundingBox) return;
-
-  previewBox.copy(boundingBox);
-  previewBox.getSize(previewSize);
-  previewBox.getCenter(previewCenter);
-
-  const maxDim = Math.max(previewSize.x, previewSize.y, previewSize.z) || 1;
-  const invScale = 1 / maxDim;
-  previewMeshInstance.position.copy(previewCenter).multiplyScalar(-1);
-  previewMeshInstance.scale.setScalar(invScale);
+  sceneThumb.add(mesh);
 
   const fitDist = 2.0;
-  previewCamera.position.set(0, fitDist, fitDist * 1.2);
-  previewCamera.lookAt(0, 0, 0);
+  camThumb.position.set(0, fitDist, fitDist * 1.2);
+  camThumb.lookAt(0, 0, 0);
 
-  previewRenderer.setRenderTarget(null);
-  previewRenderer.clear(true, true, true);
-  previewRenderer.render(previewScene, previewCamera);
+  previewRenderer.render(sceneThumb, camThumb);
 
-  ctx.drawImage(previewRenderer.domElement, 0, 0, width, height);
+  geomClone.dispose();
+  mat.dispose();
+  previewRenderer.dispose();
 }
 
 /* -------------------------------------------------------------------------- */
