@@ -19,7 +19,7 @@ It lets you import a multi-part `.fbx` file, drag and drop individual meshes int
 ### Precision editing
 - Switch to Advanced Mode for move/rotate/scale gizmos plus numeric inputs for exact transforms.
 - Flip meshes across X/Y/Z (Advanced Mode), set custom grid size, and define translation and rotation snap increments.
-- Enable grid snapping to automatically align everything to a configurable tabletop grid (Advanced Mode for custom values).
+- Optionally enable grid snapping to automatically align everything to a configurable tabletop grid (Advanced Mode for custom values).
 
 ### Export & sharing
 - Export the entire layout as an `.stl` file sized for 3D printing or additional processing.
@@ -35,8 +35,8 @@ It lets you import a multi-part `.fbx` file, drag and drop individual meshes int
    Drag parts from the library (or tap on touch) to drop them into the workspace. Use the Scene Objects list to select, duplicate (Advanced Mode), or delete items.
 4. **Adjust placement**  
    Use the bottom toolbar for quick 90° rotations, or enable **Advanced Mode** to access gizmos, numeric fields, flipping controls, and custom snapping values.
-5. **Fine-tune alignment**  
-   Toggle grid snapping to keep pieces locked to the tabletop grid. Adjust the grid size and snap distances from the Advanced panel whenever you need more precision.
+5. **Fine-tune alignment**
+   Toggle grid snapping on whenever you want pieces locked to the tabletop grid (it's off by default). Adjust the grid size and snap distances from the Advanced panel whenever you need more precision.
 6. **Review shortcuts**  
    Open the help overlay from the left toolbar for a full list of mouse, keyboard, and mode shortcuts.
 7. **Export your layout**  
