@@ -1026,7 +1026,7 @@ function renderPartPreview(geometry, canvas) {
   ctx.fillRect(0, 0, width, height);
 
   previewRenderer.setPixelRatio(dpr);
-  previewRenderer.setSize(width, height, false);
+  previewRenderer.setSize(displayWidth, displayHeight, false);
 
   previewCamera.aspect = width / height;
   previewCamera.updateProjectionMatrix();
