@@ -67,6 +67,7 @@ const snapRotateInput = document.getElementById('snapRotateInput');
 const moveModeBtn = document.getElementById('moveModeBtn');
 const rotateModeBtn = document.getElementById('rotateModeBtn');
 const scaleModeBtn = document.getElementById('scaleModeBtn');
+const measureModeBtn = document.getElementById('measureModeBtn');
 const flipButtons = [
   { btn: flipXBtn, axis: 'x' },
   { btn: flipYBtn, axis: 'y' },
@@ -76,6 +77,10 @@ const flipButtons = [
 flipButtons.forEach(({ btn }) => {
   btn.setAttribute('aria-pressed', 'false');
 });
+
+if (measureModeBtn) {
+  measureModeBtn.setAttribute('aria-pressed', 'false');
+}
 
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
@@ -87,6 +92,7 @@ const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
 let rotateAroundWorld = true;
 let isAdvancedMode = false;
+let isMeasureMode = false;
 
 const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
 const BASE_GRID_DIVISIONS = 40;
@@ -366,6 +372,305 @@ const selectedMaterial = new THREE.MeshStandardMaterial({
 });
 
 scene.add(placedPartsGroup);
+
+/* -------------------------------------------------------------------------- */
+/* MEASUREMENT TOOL                                                            */
+/* -------------------------------------------------------------------------- */
+
+const measurementGroup = new THREE.Group();
+scene.add(measurementGroup);
+
+const measurementLineMaterial = new THREE.LineBasicMaterial({
+  color: 0x4caf50,
+  transparent: true,
+  opacity: 0.95,
+  depthTest: false,
+  depthWrite: false
+});
+
+const measurementHandleMaterial = new THREE.MeshBasicMaterial({
+  color: 0x4caf50,
+  transparent: true,
+  opacity: 0.95,
+  depthTest: false,
+  depthWrite: false
+});
+
+const measurementHandleGeometry = new THREE.SphereGeometry(2.5, 24, 24);
+const measurementMidpoint = new THREE.Vector3();
+const measurementRaycastTargets = [];
+let activeMeasurement = null;
+let previousCanvasCursor = '';
+
+function createMeasurementLabelSprite(initialText = '') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+
+  const context = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    sizeAttenuation: false
+  });
+
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(200, 100, 1);
+  sprite.center.set(0.5, 0.5);
+  sprite.renderOrder = 1001;
+
+  const label = {
+    sprite,
+    canvas,
+    context,
+    texture,
+    lastText: ''
+  };
+
+  updateMeasurementLabelTexture(label, initialText);
+  sprite.visible = initialText !== '';
+
+  return label;
+}
+
+function updateMeasurementLabelTexture(label, text) {
+  if (text === label.lastText) return;
+  label.lastText = text;
+
+  const { context, canvas } = label;
+  const { width, height } = canvas;
+
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = 'rgba(18, 18, 18, 0.85)';
+  context.fillRect(0, 0, width, height);
+
+  context.strokeStyle = 'rgba(76, 175, 80, 0.65)';
+  context.lineWidth = 6;
+  context.strokeRect(3, 3, width - 6, height - 6);
+
+  context.fillStyle = '#f5f5f5';
+  context.font = 'bold 60px sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+
+  const lines = text.split('\n');
+  const lineHeight = 68;
+  const totalHeight = lineHeight * lines.length;
+  let y = (height - totalHeight) / 2 + lineHeight / 2;
+  lines.forEach((line) => {
+    context.fillText(line, width / 2, y);
+    y += lineHeight;
+  });
+
+  label.texture.needsUpdate = true;
+}
+
+function formatMeasurementText(distance) {
+  if (!Number.isFinite(distance)) return '0 mm\n0 in';
+
+  const mm = distance;
+  const mmText = mm >= 100 ? mm.toFixed(1) : mm.toFixed(2);
+  const inches = mm / 25.4;
+  const inchText = inches >= 100 ? inches.toFixed(1) : inches.toFixed(2);
+
+  return `${mmText} mm\n${inchText} in`;
+}
+
+function createMeasurementVisual() {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array(6), 3)
+  );
+
+  const line = new THREE.Line(geometry, measurementLineMaterial.clone());
+  line.visible = false;
+  line.renderOrder = 1000;
+
+  const startHandle = new THREE.Mesh(
+    measurementHandleGeometry,
+    measurementHandleMaterial.clone()
+  );
+  startHandle.visible = false;
+  startHandle.renderOrder = 1001;
+
+  const endHandle = startHandle.clone();
+  endHandle.visible = false;
+
+  const label = createMeasurementLabelSprite('');
+  label.sprite.visible = false;
+
+  measurementGroup.add(line);
+  measurementGroup.add(startHandle);
+  measurementGroup.add(endHandle);
+  measurementGroup.add(label.sprite);
+
+  return {
+    line,
+    startHandle,
+    endHandle,
+    label,
+    start: new THREE.Vector3(),
+    end: new THREE.Vector3(),
+    awaitingSecondPoint: false,
+    hasPreview: false
+  };
+}
+
+function ensureMeasurement() {
+  if (!activeMeasurement) {
+    activeMeasurement = createMeasurementVisual();
+  }
+  return activeMeasurement;
+}
+
+function setMeasurementLabel(measurement, text) {
+  updateMeasurementLabelTexture(measurement.label, text);
+  measurement.label.sprite.visible = true;
+}
+
+function refreshMeasurementDisplay(measurement) {
+  const {
+    line,
+    startHandle,
+    endHandle,
+    label,
+    start,
+    end,
+    awaitingSecondPoint,
+    hasPreview
+  } = measurement;
+
+  const positions = line.geometry.attributes.position.array;
+  positions[0] = start.x;
+  positions[1] = start.y;
+  positions[2] = start.z;
+  positions[3] = end.x;
+  positions[4] = end.y;
+  positions[5] = end.z;
+  line.geometry.attributes.position.needsUpdate = true;
+  line.geometry.computeBoundingSphere();
+
+  startHandle.position.copy(start);
+  startHandle.visible = true;
+
+  const showSecond = hasPreview || !awaitingSecondPoint;
+  endHandle.position.copy(end);
+  endHandle.visible = showSecond;
+  line.visible = showSecond;
+
+  measurementMidpoint.copy(start);
+  if (showSecond) {
+    measurementMidpoint.add(end).multiplyScalar(0.5);
+  }
+  measurementMidpoint.y += 10;
+  label.sprite.position.copy(measurementMidpoint);
+
+  if (awaitingSecondPoint && !hasPreview) {
+    setMeasurementLabel(measurement, 'Select end point');
+  } else {
+    setMeasurementLabel(
+      measurement,
+      formatMeasurementText(start.distanceTo(end))
+    );
+  }
+}
+
+function beginMeasurement(point) {
+  const measurement = ensureMeasurement();
+  measurement.start.copy(point);
+  measurement.end.copy(point);
+  measurement.awaitingSecondPoint = true;
+  measurement.hasPreview = false;
+  refreshMeasurementDisplay(measurement);
+}
+
+function previewMeasurement(point) {
+  if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
+  if (!point) {
+    activeMeasurement.end.copy(activeMeasurement.start);
+    activeMeasurement.hasPreview = false;
+    refreshMeasurementDisplay(activeMeasurement);
+    return;
+  }
+
+  activeMeasurement.end.copy(point);
+  activeMeasurement.hasPreview = true;
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function completeMeasurement(point) {
+  if (!activeMeasurement) return;
+  if (point) {
+    activeMeasurement.end.copy(point);
+  }
+  activeMeasurement.hasPreview = true;
+  activeMeasurement.awaitingSecondPoint = false;
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function cancelMeasurementPreview() {
+  if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
+  activeMeasurement.end.copy(activeMeasurement.start);
+  activeMeasurement.hasPreview = false;
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function getMeasurementPointFromEvent(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  measurementRaycastTargets.length = 0;
+  measurementRaycastTargets.push(...placedPartsGroup.children);
+  measurementRaycastTargets.push(floor);
+
+  const hits = raycaster.intersectObjects(measurementRaycastTargets, true);
+  if (hits.length === 0) return null;
+  return hits[0].point.clone();
+}
+
+function setMeasureMode(on) {
+  if (isMeasureMode === on) return;
+  isMeasureMode = on;
+
+  if (measureModeBtn) {
+    measureModeBtn.classList.toggle('active', on);
+    measureModeBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    measureModeBtn.title = on ? 'Exit measure mode (M)' : 'Measure (M)';
+  }
+
+  if (on) {
+    previousCanvasCursor = renderer.domElement.style.cursor;
+    renderer.domElement.style.cursor = 'crosshair';
+  } else {
+    renderer.domElement.style.cursor = previousCanvasCursor || '';
+  }
+
+  transformControls.enabled = !on;
+  transformControls.visible = !on && !!transformControls.object;
+
+  if (!on && activeMeasurement && activeMeasurement.awaitingSecondPoint) {
+    if (activeMeasurement.hasPreview) {
+      activeMeasurement.awaitingSecondPoint = false;
+      refreshMeasurementDisplay(activeMeasurement);
+    } else {
+      activeMeasurement.awaitingSecondPoint = false;
+      activeMeasurement.hasPreview = false;
+      activeMeasurement.line.visible = false;
+      activeMeasurement.startHandle.visible = false;
+      activeMeasurement.endHandle.visible = false;
+      activeMeasurement.label.sprite.visible = false;
+      activeMeasurement.label.lastText = '';
+    }
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* SELECTION & UI                                                              */
@@ -1634,6 +1939,21 @@ function onCanvasPointerUp(event) {
   // Left button only
   if (event.button !== 0) return;
 
+  if (isMeasureMode) {
+    const point = getMeasurementPointFromEvent(event);
+    if (activeMeasurement && activeMeasurement.awaitingSecondPoint) {
+      if (point) {
+        completeMeasurement(point);
+      } else {
+        cancelMeasurementPreview();
+      }
+    } else if (point) {
+      beginMeasurement(point);
+    }
+    hadTransformDrag = false;
+    return;
+  }
+
   // If a gizmo drag happened during this interaction, don't change selection
   if (isAdvancedMode && hadTransformDrag) {
     hadTransformDrag = false;
@@ -1658,8 +1978,27 @@ function onCanvasPointerUp(event) {
   }
 }
 
+function onCanvasPointerMove(event) {
+  if (!isMeasureMode) return;
+  if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
+  if (event.buttons !== 0) return;
+
+  const point = getMeasurementPointFromEvent(event);
+  if (point) {
+    previewMeasurement(point);
+  } else {
+    cancelMeasurementPreview();
+  }
+}
+
 renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
 renderer.domElement.addEventListener('pointerup', onCanvasPointerUp);
+renderer.domElement.addEventListener('pointermove', onCanvasPointerMove);
+renderer.domElement.addEventListener('pointerleave', () => {
+  if (isMeasureMode) {
+    cancelMeasurementPreview();
+  }
+});
 
 
 /* -------------------------------------------------------------------------- */
@@ -1795,6 +2134,7 @@ function setAdvancedMode(on) {
     setGridSnapEnabled(advancedGridSnapEnabled);
     setTransformMode('translate');
   } else {
+    setMeasureMode(false);
     if (wasAdvanced) {
       advancedGridSnapEnabled = gridSnapEnabled;
     }
@@ -1973,6 +2313,13 @@ moveModeBtn.addEventListener('click', () => setTransformMode('translate'));
 rotateModeBtn.addEventListener('click', () => setTransformMode('rotate'));
 scaleModeBtn.addEventListener('click', () => setTransformMode('scale'));
 
+if (measureModeBtn) {
+  measureModeBtn.addEventListener('click', () => {
+    if (!isAdvancedMode && !isMeasureMode) return;
+    setMeasureMode(!isMeasureMode);
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* KEYBOARD SHORTCUTS                                                          */
 /* -------------------------------------------------------------------------- */
@@ -1992,6 +2339,21 @@ window.addEventListener('keydown', (e) => {
       redo();
       return;
     }
+  }
+
+  if (e.key === 'Escape') {
+    if (isMeasureMode) {
+      e.preventDefault();
+      setMeasureMode(false);
+      return;
+    }
+  }
+
+  if (e.key === 'm' || e.key === 'M') {
+    if (!isAdvancedMode && !isMeasureMode) return;
+    e.preventDefault();
+    setMeasureMode(!isMeasureMode);
+    return;
   }
 
   if (e.key === 'q' || e.key === 'Q') {
