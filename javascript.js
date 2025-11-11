@@ -67,6 +67,8 @@ const snapRotateInput = document.getElementById('snapRotateInput');
 const moveModeBtn = document.getElementById('moveModeBtn');
 const rotateModeBtn = document.getElementById('rotateModeBtn');
 const scaleModeBtn = document.getElementById('scaleModeBtn');
+const measureModeBtn = document.getElementById('measureModeBtn');
+const measurementReadout = document.getElementById('measurementReadout');
 const flipButtons = [
   { btn: flipXBtn, axis: 'x' },
   { btn: flipYBtn, axis: 'y' },
@@ -76,6 +78,10 @@ const flipButtons = [
 flipButtons.forEach(({ btn }) => {
   btn.setAttribute('aria-pressed', 'false');
 });
+
+if (measureModeBtn) {
+  measureModeBtn.setAttribute('aria-pressed', 'false');
+}
 
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
@@ -87,6 +93,8 @@ const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
 let rotateAroundWorld = true;
 let isAdvancedMode = false;
+let isMeasureMode = false;
+let lastTransformMode = 'translate';
 
 const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
 const BASE_GRID_DIVISIONS = 40;
@@ -368,6 +376,406 @@ const selectedMaterial = new THREE.MeshStandardMaterial({
 scene.add(placedPartsGroup);
 
 /* -------------------------------------------------------------------------- */
+/* MEASUREMENT TOOL                                                            */
+/* -------------------------------------------------------------------------- */
+
+const measurementGroup = new THREE.Group();
+scene.add(measurementGroup);
+
+const measurementLineMaterial = new THREE.LineBasicMaterial({
+  color: 0x4ea1ff,
+  transparent: true,
+  opacity: 0.95,
+  depthTest: false,
+  depthWrite: false
+});
+
+const measurementHandleMaterial = new THREE.MeshBasicMaterial({
+  color: 0x4ea1ff,
+  transparent: true,
+  opacity: 0.95,
+  depthTest: false,
+  depthWrite: false
+});
+
+const measurementHandleGeometry = new THREE.SphereGeometry(2.5, 24, 24);
+const measurementMidpoint = new THREE.Vector3();
+const measurementRaycastTargets = [];
+let activeMeasurement = null;
+let previousCanvasCursor = '';
+
+function setMeasurementReadout(text) {
+  if (!measurementReadout) return;
+  if (text && text.trim().length > 0) {
+    measurementReadout.textContent = text;
+    measurementReadout.classList.add('visible');
+  } else {
+    measurementReadout.textContent = '';
+    measurementReadout.classList.remove('visible');
+  }
+}
+
+function createMeasurementLabelSprite(initialText = '') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+
+  const context = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    sizeAttenuation: false
+  });
+
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(140, 70, 1);
+  sprite.center.set(0.5, 0.5);
+  sprite.renderOrder = 1001;
+
+  const label = {
+    sprite,
+    canvas,
+    context,
+    texture,
+    lastText: ''
+  };
+
+  updateMeasurementLabelTexture(label, initialText);
+  sprite.visible = initialText !== '';
+
+  return label;
+}
+
+function updateMeasurementLabelTexture(label, text) {
+  if (text === label.lastText) return;
+  label.lastText = text;
+
+  const { context, canvas } = label;
+  const { width, height } = canvas;
+
+  context.clearRect(0, 0, width, height);
+
+  context.strokeStyle = 'rgba(78, 161, 255, 0.75)';
+  context.lineWidth = 5;
+  context.strokeRect(4, 4, width - 8, height - 8);
+
+  context.fillStyle = '#f5f5f5';
+  context.shadowColor = 'rgba(0, 0, 0, 0.35)';
+  context.shadowBlur = 12;
+  context.font = 'bold 60px sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+
+  const lines = text.split('\n');
+  const lineHeight = 68;
+  const totalHeight = lineHeight * lines.length;
+  let y = (height - totalHeight) / 2 + lineHeight / 2;
+  lines.forEach((line) => {
+    context.fillText(line, width / 2, y);
+    y += lineHeight;
+  });
+
+  context.shadowBlur = 0;
+  context.shadowColor = 'transparent';
+
+  label.texture.needsUpdate = true;
+}
+
+function formatMeasurementValues(distance) {
+  const mm = Number.isFinite(distance) ? distance : 0;
+  const mmText = mm >= 100 ? mm.toFixed(1) : mm.toFixed(2);
+  const inches = mm / 25.4;
+  const inchText = inches >= 100 ? inches.toFixed(1) : inches.toFixed(2);
+
+  return {
+    label: `${mmText} mm\n${inchText} in`,
+    readout: `${mmText} mm • ${inchText} in`
+  };
+}
+
+function createMeasurementVisual() {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array(6), 3)
+  );
+
+  const line = new THREE.Line(geometry, measurementLineMaterial.clone());
+  line.visible = false;
+  line.renderOrder = 1000;
+
+  const startHandle = new THREE.Mesh(
+    measurementHandleGeometry,
+    measurementHandleMaterial.clone()
+  );
+  startHandle.visible = false;
+  startHandle.renderOrder = 1001;
+
+  const endHandle = startHandle.clone();
+  endHandle.visible = false;
+
+  const label = createMeasurementLabelSprite('');
+  label.sprite.visible = false;
+
+  measurementGroup.add(line);
+  measurementGroup.add(startHandle);
+  measurementGroup.add(endHandle);
+  measurementGroup.add(label.sprite);
+
+  return {
+    line,
+    startHandle,
+    endHandle,
+    label,
+    start: new THREE.Vector3(),
+    end: new THREE.Vector3(),
+    awaitingSecondPoint: false,
+    hasPreview: false,
+    repositioningHandle: null,
+    repositioningOriginalPoint: new THREE.Vector3(),
+    awaitingPrompt: ''
+  };
+}
+
+function ensureMeasurement() {
+  if (!activeMeasurement) {
+    activeMeasurement = createMeasurementVisual();
+  }
+  return activeMeasurement;
+}
+
+function setMeasurementLabel(measurement, text, readoutText) {
+  updateMeasurementLabelTexture(measurement.label, text);
+  measurement.label.sprite.visible = text !== '';
+  if (readoutText !== undefined) {
+    setMeasurementReadout(readoutText);
+  }
+}
+
+function clearMeasurementVisuals() {
+  if (!activeMeasurement) return;
+  activeMeasurement.awaitingSecondPoint = false;
+  activeMeasurement.hasPreview = false;
+  activeMeasurement.repositioningHandle = null;
+  activeMeasurement.awaitingPrompt = '';
+  activeMeasurement.repositioningOriginalPoint.set(0, 0, 0);
+  activeMeasurement.line.visible = false;
+  activeMeasurement.startHandle.visible = false;
+  activeMeasurement.endHandle.visible = false;
+  activeMeasurement.label.sprite.visible = false;
+  activeMeasurement.label.lastText = '';
+}
+
+function refreshMeasurementDisplay(measurement) {
+  const {
+    line,
+    startHandle,
+    endHandle,
+    label,
+    start,
+    end,
+    awaitingSecondPoint,
+    hasPreview
+  } = measurement;
+
+  const positions = line.geometry.attributes.position.array;
+  positions[0] = start.x;
+  positions[1] = start.y;
+  positions[2] = start.z;
+  positions[3] = end.x;
+  positions[4] = end.y;
+  positions[5] = end.z;
+  line.geometry.attributes.position.needsUpdate = true;
+  line.geometry.computeBoundingSphere();
+
+  startHandle.position.copy(start);
+  startHandle.visible = true;
+
+  const showSecond =
+    hasPreview || !awaitingSecondPoint || measurement.repositioningHandle !== null;
+  endHandle.position.copy(end);
+  endHandle.visible = showSecond;
+  line.visible = showSecond;
+
+  measurementMidpoint.copy(start);
+  if (showSecond) {
+    measurementMidpoint.add(end).multiplyScalar(0.5);
+  }
+  measurementMidpoint.y += 10;
+  label.sprite.position.copy(measurementMidpoint);
+
+  if (awaitingSecondPoint && !hasPreview) {
+    // Keep instructions in the readout but avoid drawing the 3D label until we
+    // have a preview segment so no overlay appears on the scene.
+    const prompt = measurement.awaitingPrompt || 'Select end point';
+    setMeasurementLabel(measurement, '', prompt);
+  } else {
+    const { label: labelText, readout } = formatMeasurementValues(
+      start.distanceTo(end)
+    );
+    setMeasurementLabel(measurement, labelText, readout);
+  }
+}
+
+function beginMeasurement(point) {
+  const measurement = ensureMeasurement();
+  measurement.start.copy(point);
+  measurement.end.copy(point);
+  measurement.awaitingSecondPoint = true;
+  measurement.hasPreview = false;
+  measurement.repositioningHandle = null;
+  measurement.awaitingPrompt = 'Select end point';
+  refreshMeasurementDisplay(measurement);
+}
+
+function previewMeasurement(point) {
+  if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
+  if (!point) {
+    if (activeMeasurement.repositioningHandle) {
+      activeMeasurement[activeMeasurement.repositioningHandle].copy(
+        activeMeasurement.repositioningOriginalPoint
+      );
+    } else {
+      activeMeasurement.end.copy(activeMeasurement.start);
+    }
+    activeMeasurement.hasPreview = false;
+    refreshMeasurementDisplay(activeMeasurement);
+    return;
+  }
+
+  if (activeMeasurement.repositioningHandle) {
+    activeMeasurement[activeMeasurement.repositioningHandle].copy(point);
+  } else {
+    activeMeasurement.end.copy(point);
+  }
+  activeMeasurement.hasPreview = true;
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function completeMeasurement(point) {
+  if (!activeMeasurement) return;
+  if (activeMeasurement.awaitingSecondPoint && activeMeasurement.repositioningHandle) {
+    const handle = activeMeasurement.repositioningHandle;
+    if (point) {
+      activeMeasurement[handle].copy(point);
+    } else {
+      activeMeasurement[handle].copy(activeMeasurement.repositioningOriginalPoint);
+    }
+    activeMeasurement.awaitingSecondPoint = false;
+    activeMeasurement.hasPreview = true;
+    activeMeasurement.repositioningHandle = null;
+    activeMeasurement.awaitingPrompt = '';
+    activeMeasurement.repositioningOriginalPoint.set(0, 0, 0);
+    refreshMeasurementDisplay(activeMeasurement);
+    return;
+  }
+
+  if (point) {
+    activeMeasurement.end.copy(point);
+  }
+  activeMeasurement.hasPreview = true;
+  activeMeasurement.awaitingSecondPoint = false;
+  activeMeasurement.awaitingPrompt = '';
+  activeMeasurement.repositioningOriginalPoint.set(0, 0, 0);
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function cancelMeasurementPreview() {
+  if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
+  if (activeMeasurement.repositioningHandle) {
+    activeMeasurement[activeMeasurement.repositioningHandle].copy(
+      activeMeasurement.repositioningOriginalPoint
+    );
+  } else {
+    activeMeasurement.end.copy(activeMeasurement.start);
+  }
+  activeMeasurement.hasPreview = false;
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function beginMeasurementHandleAdjust(handle) {
+  if (!activeMeasurement || activeMeasurement.awaitingSecondPoint) return;
+  activeMeasurement.repositioningHandle = handle;
+  activeMeasurement.repositioningOriginalPoint.copy(activeMeasurement[handle]);
+  activeMeasurement.awaitingSecondPoint = true;
+  activeMeasurement.hasPreview = false;
+  activeMeasurement.awaitingPrompt =
+    handle === 'start' ? 'Select new start point' : 'Select new end point';
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function getMeasurementHandleFromEvent(event) {
+  if (!activeMeasurement) return null;
+  const handles = [];
+  if (activeMeasurement.startHandle.visible) handles.push(activeMeasurement.startHandle);
+  if (activeMeasurement.endHandle.visible) handles.push(activeMeasurement.endHandle);
+  if (handles.length === 0) return null;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(handles, false);
+  if (hits.length === 0) return null;
+  const object = hits[0].object;
+  if (object === activeMeasurement.startHandle) return 'start';
+  if (object === activeMeasurement.endHandle) return 'end';
+  return null;
+}
+
+function getMeasurementPointFromEvent(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  measurementRaycastTargets.length = 0;
+  measurementRaycastTargets.push(...placedPartsGroup.children);
+  measurementRaycastTargets.push(floor);
+
+  const hits = raycaster.intersectObjects(measurementRaycastTargets, true);
+  if (hits.length === 0) return null;
+  return hits[0].point.clone();
+}
+
+function setMeasureMode(on) {
+  if (isMeasureMode === on) return;
+  isMeasureMode = on;
+
+  if (measureModeBtn) {
+    measureModeBtn.classList.toggle('active', on);
+    measureModeBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    measureModeBtn.title = on ? 'Exit measure mode (M)' : 'Measure (M)';
+  }
+
+  if (on) {
+    previousCanvasCursor = renderer.domElement.style.cursor;
+    renderer.domElement.style.cursor = 'crosshair';
+    clearMeasurementVisuals();
+    setMeasurementReadout('Click to place measurement');
+  } else {
+    renderer.domElement.style.cursor = previousCanvasCursor || '';
+    clearMeasurementVisuals();
+    setMeasurementReadout('');
+  }
+
+  transformControls.enabled = !on;
+  transformControls.visible = !on && !!transformControls.object;
+
+  if (!on && isAdvancedMode) {
+    setTransformMode(lastTransformMode, { fromMeasure: true });
+  }
+
+  updateBottomControlsVisibility();
+}
+
+/* -------------------------------------------------------------------------- */
 /* SELECTION & UI                                                              */
 /* -------------------------------------------------------------------------- */
 
@@ -408,7 +816,7 @@ function updateBottomControlsVisibility() {
   if (scaleModeBtn) scaleModeBtn.disabled = !hasSelection;
 
   if (moveModeBtn && rotateModeBtn && scaleModeBtn) {
-    if (!hasSelection) {
+    if (!hasSelection || isMeasureMode) {
       moveModeBtn.classList.remove('active');
       rotateModeBtn.classList.remove('active');
       scaleModeBtn.classList.remove('active');
@@ -418,6 +826,15 @@ function updateBottomControlsVisibility() {
       rotateModeBtn.classList.toggle('active', activeMode === 'rotate');
       scaleModeBtn.classList.toggle('active', activeMode === 'scale');
     }
+  }
+
+  if (measureModeBtn) {
+    measureModeBtn.disabled = !isAdvancedMode;
+    measureModeBtn.classList.toggle('active', isMeasureMode);
+    measureModeBtn.setAttribute('aria-pressed', isMeasureMode ? 'true' : 'false');
+    measureModeBtn.title = isMeasureMode
+      ? 'Exit measure mode (M)'
+      : 'Measure (M)';
   }
 
   updateGridSnapButton();
@@ -1634,6 +2051,30 @@ function onCanvasPointerUp(event) {
   // Left button only
   if (event.button !== 0) return;
 
+  if (isMeasureMode) {
+    if (activeMeasurement && !activeMeasurement.awaitingSecondPoint) {
+      const handle = getMeasurementHandleFromEvent(event);
+      if (handle) {
+        beginMeasurementHandleAdjust(handle);
+        hadTransformDrag = false;
+        return;
+      }
+    }
+
+    const point = getMeasurementPointFromEvent(event);
+    if (activeMeasurement && activeMeasurement.awaitingSecondPoint) {
+      if (point) {
+        completeMeasurement(point);
+      } else {
+        cancelMeasurementPreview();
+      }
+    } else if (point) {
+      beginMeasurement(point);
+    }
+    hadTransformDrag = false;
+    return;
+  }
+
   // If a gizmo drag happened during this interaction, don't change selection
   if (isAdvancedMode && hadTransformDrag) {
     hadTransformDrag = false;
@@ -1658,8 +2099,27 @@ function onCanvasPointerUp(event) {
   }
 }
 
+function onCanvasPointerMove(event) {
+  if (!isMeasureMode) return;
+  if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
+  if (event.buttons !== 0) return;
+
+  const point = getMeasurementPointFromEvent(event);
+  if (point) {
+    previewMeasurement(point);
+  } else {
+    cancelMeasurementPreview();
+  }
+}
+
 renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
 renderer.domElement.addEventListener('pointerup', onCanvasPointerUp);
+renderer.domElement.addEventListener('pointermove', onCanvasPointerMove);
+renderer.domElement.addEventListener('pointerleave', () => {
+  if (isMeasureMode) {
+    cancelMeasurementPreview();
+  }
+});
 
 
 /* -------------------------------------------------------------------------- */
@@ -1795,6 +2255,7 @@ function setAdvancedMode(on) {
     setGridSnapEnabled(advancedGridSnapEnabled);
     setTransformMode('translate');
   } else {
+    setMeasureMode(false);
     if (wasAdvanced) {
       advancedGridSnapEnabled = gridSnapEnabled;
     }
@@ -1960,18 +2421,28 @@ function updateTransformSnapping() {
 snapTranslateInput.addEventListener('change', updateTransformSnapping);
 snapRotateInput.addEventListener('change', updateTransformSnapping);
 
-function setTransformMode(mode) {
+function setTransformMode(mode, { fromMeasure = false } = {}) {
   if (!isAdvancedMode) return;
 
+  if (!fromMeasure && isMeasureMode) {
+    setMeasureMode(false);
+  }
+
   transformControls.setMode(mode);
-  moveModeBtn.classList.toggle('active', mode === 'translate');
-  rotateModeBtn.classList.toggle('active', mode === 'rotate');
-  scaleModeBtn.classList.toggle('active', mode === 'scale');
+  lastTransformMode = mode;
+  updateBottomControlsVisibility();
 }
 
 moveModeBtn.addEventListener('click', () => setTransformMode('translate'));
 rotateModeBtn.addEventListener('click', () => setTransformMode('rotate'));
 scaleModeBtn.addEventListener('click', () => setTransformMode('scale'));
+
+if (measureModeBtn) {
+  measureModeBtn.addEventListener('click', () => {
+    if (!isAdvancedMode && !isMeasureMode) return;
+    setMeasureMode(!isMeasureMode);
+  });
+}
 
 /* -------------------------------------------------------------------------- */
 /* KEYBOARD SHORTCUTS                                                          */
@@ -1992,6 +2463,21 @@ window.addEventListener('keydown', (e) => {
       redo();
       return;
     }
+  }
+
+  if (e.key === 'Escape') {
+    if (isMeasureMode) {
+      e.preventDefault();
+      setMeasureMode(false);
+      return;
+    }
+  }
+
+  if (e.key === 'm' || e.key === 'M') {
+    if (!isAdvancedMode && !isMeasureMode) return;
+    e.preventDefault();
+    setMeasureMode(!isMeasureMode);
+    return;
   }
 
   if (e.key === 'q' || e.key === 'Q') {
