@@ -101,14 +101,18 @@ body {
 
 #scenePanel,
 #advancedPanel {
-  height: 220px; /* sensible default, user can resize */
   min-height: 120px;
   max-height: calc(100vh - 260px); /* leave room for header/parts */
   overflow-y: auto;
 }
 
+#scenePanel {
+  height: 220px; /* sensible default, user can resize */
+}
+
 #advancedPanel {
   display: none;
+  height: 360px; /* start tall enough to show full transform controls */
 }
 
 /* Vertical resize handles for panels */
