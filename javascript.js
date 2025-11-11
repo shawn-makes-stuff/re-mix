@@ -68,6 +68,7 @@ const moveModeBtn = document.getElementById('moveModeBtn');
 const rotateModeBtn = document.getElementById('rotateModeBtn');
 const scaleModeBtn = document.getElementById('scaleModeBtn');
 const measureModeBtn = document.getElementById('measureModeBtn');
+const measurementReadout = document.getElementById('measurementReadout');
 const flipButtons = [
   { btn: flipXBtn, axis: 'x' },
   { btn: flipYBtn, axis: 'y' },
@@ -93,6 +94,7 @@ const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 let rotateAroundWorld = true;
 let isAdvancedMode = false;
 let isMeasureMode = false;
+let lastTransformMode = 'translate';
 
 const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
 const BASE_GRID_DIVISIONS = 40;
@@ -402,6 +404,17 @@ const measurementRaycastTargets = [];
 let activeMeasurement = null;
 let previousCanvasCursor = '';
 
+function setMeasurementReadout(text) {
+  if (!measurementReadout) return;
+  if (text && text.trim().length > 0) {
+    measurementReadout.textContent = text;
+    measurementReadout.classList.add('visible');
+  } else {
+    measurementReadout.textContent = '';
+    measurementReadout.classList.remove('visible');
+  }
+}
+
 function createMeasurementLabelSprite(initialText = '') {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
@@ -420,7 +433,7 @@ function createMeasurementLabelSprite(initialText = '') {
   });
 
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(200, 100, 1);
+  sprite.scale.set(140, 70, 1);
   sprite.center.set(0.5, 0.5);
   sprite.renderOrder = 1001;
 
@@ -446,7 +459,7 @@ function updateMeasurementLabelTexture(label, text) {
   const { width, height } = canvas;
 
   context.clearRect(0, 0, width, height);
-  context.fillStyle = 'rgba(18, 18, 18, 0.85)';
+  context.fillStyle = 'rgba(18, 18, 18, 0.72)';
   context.fillRect(0, 0, width, height);
 
   context.strokeStyle = 'rgba(76, 175, 80, 0.65)';
@@ -470,15 +483,16 @@ function updateMeasurementLabelTexture(label, text) {
   label.texture.needsUpdate = true;
 }
 
-function formatMeasurementText(distance) {
-  if (!Number.isFinite(distance)) return '0 mm\n0 in';
-
-  const mm = distance;
+function formatMeasurementValues(distance) {
+  const mm = Number.isFinite(distance) ? distance : 0;
   const mmText = mm >= 100 ? mm.toFixed(1) : mm.toFixed(2);
   const inches = mm / 25.4;
   const inchText = inches >= 100 ? inches.toFixed(1) : inches.toFixed(2);
 
-  return `${mmText} mm\n${inchText} in`;
+  return {
+    label: `${mmText} mm\n${inchText} in`,
+    readout: `${mmText} mm • ${inchText} in`
+  };
 }
 
 function createMeasurementVisual() {
@@ -529,9 +543,23 @@ function ensureMeasurement() {
   return activeMeasurement;
 }
 
-function setMeasurementLabel(measurement, text) {
+function setMeasurementLabel(measurement, text, readoutText) {
   updateMeasurementLabelTexture(measurement.label, text);
-  measurement.label.sprite.visible = true;
+  measurement.label.sprite.visible = text !== '';
+  if (readoutText !== undefined) {
+    setMeasurementReadout(readoutText);
+  }
+}
+
+function clearMeasurementVisuals() {
+  if (!activeMeasurement) return;
+  activeMeasurement.awaitingSecondPoint = false;
+  activeMeasurement.hasPreview = false;
+  activeMeasurement.line.visible = false;
+  activeMeasurement.startHandle.visible = false;
+  activeMeasurement.endHandle.visible = false;
+  activeMeasurement.label.sprite.visible = false;
+  activeMeasurement.label.lastText = '';
 }
 
 function refreshMeasurementDisplay(measurement) {
@@ -572,12 +600,12 @@ function refreshMeasurementDisplay(measurement) {
   label.sprite.position.copy(measurementMidpoint);
 
   if (awaitingSecondPoint && !hasPreview) {
-    setMeasurementLabel(measurement, 'Select end point');
+    setMeasurementLabel(measurement, 'Select end point', 'Select end point');
   } else {
-    setMeasurementLabel(
-      measurement,
-      formatMeasurementText(start.distanceTo(end))
+    const { label: labelText, readout } = formatMeasurementValues(
+      start.distanceTo(end)
     );
+    setMeasurementLabel(measurement, labelText, readout);
   }
 }
 
@@ -649,27 +677,22 @@ function setMeasureMode(on) {
   if (on) {
     previousCanvasCursor = renderer.domElement.style.cursor;
     renderer.domElement.style.cursor = 'crosshair';
+    clearMeasurementVisuals();
+    setMeasurementReadout('Click to place measurement');
   } else {
     renderer.domElement.style.cursor = previousCanvasCursor || '';
+    clearMeasurementVisuals();
+    setMeasurementReadout('');
   }
 
   transformControls.enabled = !on;
   transformControls.visible = !on && !!transformControls.object;
 
-  if (!on && activeMeasurement && activeMeasurement.awaitingSecondPoint) {
-    if (activeMeasurement.hasPreview) {
-      activeMeasurement.awaitingSecondPoint = false;
-      refreshMeasurementDisplay(activeMeasurement);
-    } else {
-      activeMeasurement.awaitingSecondPoint = false;
-      activeMeasurement.hasPreview = false;
-      activeMeasurement.line.visible = false;
-      activeMeasurement.startHandle.visible = false;
-      activeMeasurement.endHandle.visible = false;
-      activeMeasurement.label.sprite.visible = false;
-      activeMeasurement.label.lastText = '';
-    }
+  if (!on && isAdvancedMode) {
+    setTransformMode(lastTransformMode, { fromMeasure: true });
   }
+
+  updateBottomControlsVisibility();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -713,7 +736,7 @@ function updateBottomControlsVisibility() {
   if (scaleModeBtn) scaleModeBtn.disabled = !hasSelection;
 
   if (moveModeBtn && rotateModeBtn && scaleModeBtn) {
-    if (!hasSelection) {
+    if (!hasSelection || isMeasureMode) {
       moveModeBtn.classList.remove('active');
       rotateModeBtn.classList.remove('active');
       scaleModeBtn.classList.remove('active');
@@ -723,6 +746,15 @@ function updateBottomControlsVisibility() {
       rotateModeBtn.classList.toggle('active', activeMode === 'rotate');
       scaleModeBtn.classList.toggle('active', activeMode === 'scale');
     }
+  }
+
+  if (measureModeBtn) {
+    measureModeBtn.disabled = !isAdvancedMode;
+    measureModeBtn.classList.toggle('active', isMeasureMode);
+    measureModeBtn.setAttribute('aria-pressed', isMeasureMode ? 'true' : 'false');
+    measureModeBtn.title = isMeasureMode
+      ? 'Exit measure mode (M)'
+      : 'Measure (M)';
   }
 
   updateGridSnapButton();
@@ -2300,13 +2332,16 @@ function updateTransformSnapping() {
 snapTranslateInput.addEventListener('change', updateTransformSnapping);
 snapRotateInput.addEventListener('change', updateTransformSnapping);
 
-function setTransformMode(mode) {
+function setTransformMode(mode, { fromMeasure = false } = {}) {
   if (!isAdvancedMode) return;
 
+  if (!fromMeasure && isMeasureMode) {
+    setMeasureMode(false);
+  }
+
   transformControls.setMode(mode);
-  moveModeBtn.classList.toggle('active', mode === 'translate');
-  rotateModeBtn.classList.toggle('active', mode === 'rotate');
-  scaleModeBtn.classList.toggle('active', mode === 'scale');
+  lastTransformMode = mode;
+  updateBottomControlsVisibility();
 }
 
 moveModeBtn.addEventListener('click', () => setTransformMode('translate'));
