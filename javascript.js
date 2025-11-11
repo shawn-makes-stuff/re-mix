@@ -1663,6 +1663,11 @@ renderer.domElement.addEventListener('pointerup', onCanvasPointerUp);
 function rotateSelectedPart(deltaSteps) {
   if (selectedMeshes.size === 0) return;
 
+  if (!rotateAroundWorld && selectedMeshes.size === 1) {
+    rotateSelectedPartAroundCenter(deltaSteps);
+    return;
+  }
+
   const angle = deltaSteps * (Math.PI / 2);
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
@@ -1729,22 +1734,22 @@ if (rotationModeBtn) {
 
 updateRotationModeUi();
 
-rotateLeftBtn.addEventListener('click', () => {
+rotateLeftBtn.addEventListener('click', (event) => {
   if (selectedMeshes.size === 0) return;
-  if (!rotateAroundWorld && selectedMeshes.size === 1) {
+  if (event?.shiftKey) {
     rotateSelectedPartAroundCenter(-1);
-  } else {
-    rotateSelectedPart(-1);
+    return;
   }
+  rotateSelectedPart(-1);
 });
 
-rotateRightBtn.addEventListener('click', () => {
+rotateRightBtn.addEventListener('click', (event) => {
   if (selectedMeshes.size === 0) return;
-  if (!rotateAroundWorld && selectedMeshes.size === 1) {
+  if (event?.shiftKey) {
     rotateSelectedPartAroundCenter(1);
-  } else {
-    rotateSelectedPart(1);
+    return;
   }
+  rotateSelectedPart(1);
 });
 
 if (gridSnapBtn) {
@@ -1984,11 +1989,17 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (e.key === 'q' || e.key === 'Q') {
-    if (e.shiftKey) rotateSelectedPartAroundCenter(-1);
-    else rotateSelectedPart(-1);
+    if (e.shiftKey || (!rotateAroundWorld && selectedMeshes.size === 1)) {
+      rotateSelectedPartAroundCenter(-1);
+    } else {
+      rotateSelectedPart(-1);
+    }
   } else if (e.key === 'e' || e.key === 'E') {
-    if (e.shiftKey) rotateSelectedPartAroundCenter(1);
-    else rotateSelectedPart(1);
+    if (e.shiftKey || (!rotateAroundWorld && selectedMeshes.size === 1)) {
+      rotateSelectedPartAroundCenter(1);
+    } else {
+      rotateSelectedPart(1);
+    }
   } else if (e.key === 'h' || e.key === 'H' || e.code === 'Home') {
     frameScene(false);
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
