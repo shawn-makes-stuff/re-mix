@@ -535,7 +535,10 @@ function createMeasurementVisual() {
     start: new THREE.Vector3(),
     end: new THREE.Vector3(),
     awaitingSecondPoint: false,
-    hasPreview: false
+    hasPreview: false,
+    repositioningHandle: null,
+    repositioningOriginalPoint: new THREE.Vector3(),
+    awaitingPrompt: ''
   };
 }
 
@@ -558,6 +561,9 @@ function clearMeasurementVisuals() {
   if (!activeMeasurement) return;
   activeMeasurement.awaitingSecondPoint = false;
   activeMeasurement.hasPreview = false;
+  activeMeasurement.repositioningHandle = null;
+  activeMeasurement.awaitingPrompt = '';
+  activeMeasurement.repositioningOriginalPoint.set(0, 0, 0);
   activeMeasurement.line.visible = false;
   activeMeasurement.startHandle.visible = false;
   activeMeasurement.endHandle.visible = false;
@@ -590,7 +596,8 @@ function refreshMeasurementDisplay(measurement) {
   startHandle.position.copy(start);
   startHandle.visible = true;
 
-  const showSecond = hasPreview || !awaitingSecondPoint;
+  const showSecond =
+    hasPreview || !awaitingSecondPoint || measurement.repositioningHandle !== null;
   endHandle.position.copy(end);
   endHandle.visible = showSecond;
   line.visible = showSecond;
@@ -605,7 +612,8 @@ function refreshMeasurementDisplay(measurement) {
   if (awaitingSecondPoint && !hasPreview) {
     // Keep instructions in the readout but avoid drawing the 3D label until we
     // have a preview segment so no overlay appears on the scene.
-    setMeasurementLabel(measurement, '', 'Select end point');
+    const prompt = measurement.awaitingPrompt || 'Select end point';
+    setMeasurementLabel(measurement, '', prompt);
   } else {
     const { label: labelText, readout } = formatMeasurementValues(
       start.distanceTo(end)
@@ -620,38 +628,105 @@ function beginMeasurement(point) {
   measurement.end.copy(point);
   measurement.awaitingSecondPoint = true;
   measurement.hasPreview = false;
+  measurement.repositioningHandle = null;
+  measurement.awaitingPrompt = 'Select end point';
   refreshMeasurementDisplay(measurement);
 }
 
 function previewMeasurement(point) {
   if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
   if (!point) {
-    activeMeasurement.end.copy(activeMeasurement.start);
+    if (activeMeasurement.repositioningHandle) {
+      activeMeasurement[activeMeasurement.repositioningHandle].copy(
+        activeMeasurement.repositioningOriginalPoint
+      );
+    } else {
+      activeMeasurement.end.copy(activeMeasurement.start);
+    }
     activeMeasurement.hasPreview = false;
     refreshMeasurementDisplay(activeMeasurement);
     return;
   }
 
-  activeMeasurement.end.copy(point);
+  if (activeMeasurement.repositioningHandle) {
+    activeMeasurement[activeMeasurement.repositioningHandle].copy(point);
+  } else {
+    activeMeasurement.end.copy(point);
+  }
   activeMeasurement.hasPreview = true;
   refreshMeasurementDisplay(activeMeasurement);
 }
 
 function completeMeasurement(point) {
   if (!activeMeasurement) return;
+  if (activeMeasurement.awaitingSecondPoint && activeMeasurement.repositioningHandle) {
+    const handle = activeMeasurement.repositioningHandle;
+    if (point) {
+      activeMeasurement[handle].copy(point);
+    } else {
+      activeMeasurement[handle].copy(activeMeasurement.repositioningOriginalPoint);
+    }
+    activeMeasurement.awaitingSecondPoint = false;
+    activeMeasurement.hasPreview = true;
+    activeMeasurement.repositioningHandle = null;
+    activeMeasurement.awaitingPrompt = '';
+    activeMeasurement.repositioningOriginalPoint.set(0, 0, 0);
+    refreshMeasurementDisplay(activeMeasurement);
+    return;
+  }
+
   if (point) {
     activeMeasurement.end.copy(point);
   }
   activeMeasurement.hasPreview = true;
   activeMeasurement.awaitingSecondPoint = false;
+  activeMeasurement.awaitingPrompt = '';
+  activeMeasurement.repositioningOriginalPoint.set(0, 0, 0);
   refreshMeasurementDisplay(activeMeasurement);
 }
 
 function cancelMeasurementPreview() {
   if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
-  activeMeasurement.end.copy(activeMeasurement.start);
+  if (activeMeasurement.repositioningHandle) {
+    activeMeasurement[activeMeasurement.repositioningHandle].copy(
+      activeMeasurement.repositioningOriginalPoint
+    );
+  } else {
+    activeMeasurement.end.copy(activeMeasurement.start);
+  }
   activeMeasurement.hasPreview = false;
   refreshMeasurementDisplay(activeMeasurement);
+}
+
+function beginMeasurementHandleAdjust(handle) {
+  if (!activeMeasurement || activeMeasurement.awaitingSecondPoint) return;
+  activeMeasurement.repositioningHandle = handle;
+  activeMeasurement.repositioningOriginalPoint.copy(activeMeasurement[handle]);
+  activeMeasurement.awaitingSecondPoint = true;
+  activeMeasurement.hasPreview = false;
+  activeMeasurement.awaitingPrompt =
+    handle === 'start' ? 'Select new start point' : 'Select new end point';
+  refreshMeasurementDisplay(activeMeasurement);
+}
+
+function getMeasurementHandleFromEvent(event) {
+  if (!activeMeasurement) return null;
+  const handles = [];
+  if (activeMeasurement.startHandle.visible) handles.push(activeMeasurement.startHandle);
+  if (activeMeasurement.endHandle.visible) handles.push(activeMeasurement.endHandle);
+  if (handles.length === 0) return null;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(handles, false);
+  if (hits.length === 0) return null;
+  const object = hits[0].object;
+  if (object === activeMeasurement.startHandle) return 'start';
+  if (object === activeMeasurement.endHandle) return 'end';
+  return null;
 }
 
 function getMeasurementPointFromEvent(event) {
@@ -1977,6 +2052,15 @@ function onCanvasPointerUp(event) {
   if (event.button !== 0) return;
 
   if (isMeasureMode) {
+    if (activeMeasurement && !activeMeasurement.awaitingSecondPoint) {
+      const handle = getMeasurementHandleFromEvent(event);
+      if (handle) {
+        beginMeasurementHandleAdjust(handle);
+        hadTransformDrag = false;
+        return;
+      }
+    }
+
     const point = getMeasurementPointFromEvent(event);
     if (activeMeasurement && activeMeasurement.awaitingSecondPoint) {
       if (point) {
