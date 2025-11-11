@@ -603,7 +603,9 @@ function refreshMeasurementDisplay(measurement) {
   label.sprite.position.copy(measurementMidpoint);
 
   if (awaitingSecondPoint && !hasPreview) {
-    setMeasurementLabel(measurement, 'Select end point', 'Select end point');
+    // Keep instructions in the readout but avoid drawing the 3D label until we
+    // have a preview segment so no overlay appears on the scene.
+    setMeasurementLabel(measurement, '', 'Select end point');
   } else {
     const { label: labelText, readout } = formatMeasurementValues(
       start.distanceTo(end)
