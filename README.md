@@ -3,6 +3,9 @@
 **(re)Mix** is a browser-based 3D scene builder built with **Three.js**.
 It lets you import a multi-part `.fbx` file, drag and drop individual meshes into a scene, adjust their position, rotation, and scale, then export everything as an `.stl` file — all directly in your web browser.
 
+<img width="2422" height="1273" alt="image" src="https://github.com/user-attachments/assets/7deee117-8265-424e-b5a1-54d4036eab8d" />
+
+
 
 ## 🌟 Feature Overview
 ### Import & library management
