@@ -259,7 +259,7 @@ scene.add(transformControls);
 scene.add(selectionTransformAnchor);
 let isTransforming = false;
 let hadTransformDrag = false;   // 👈 did this pointer interaction actually drag the gizmo?
-let pointerDownPos = null;  
+let pointerDownPos = null;
 
 transformControls.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
@@ -1450,8 +1450,13 @@ fileInput.addEventListener('change', async (e) => {
         }
       } else if (extension === 'stl') {
         const geometry = stlLoader.parse(arrayBuffer);
+
+        // STL is typically Z-up; Three.js is Y-up. Fix orientation once at import:
+        geometry.rotateX(-Math.PI / 2);
+
         if (!geometry.attributes.normal) geometry.computeVertexNormals();
 
+        // Now do your centering/BB work in the corrected orientation:
         geometry.computeBoundingBox();
         const boundingBox = geometry.boundingBox;
         if (boundingBox) {
