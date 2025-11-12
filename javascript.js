@@ -900,9 +900,10 @@ function updateBottomControlsVisibility() {
   }
 
   const isSelectMode = currentTransformMode === 'select';
+  const hasCanvasItems = placedPartsGroup.children.length > 0;
 
   if (selectModeBtn) {
-    const disabled = !isAdvancedMode || isMeasureMode;
+    const disabled = !isAdvancedMode || isMeasureMode || !hasCanvasItems;
     selectModeBtn.disabled = disabled;
     const active = !disabled && isSelectMode;
     selectModeBtn.classList.toggle('active', active);
