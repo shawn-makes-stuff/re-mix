@@ -64,6 +64,7 @@ const snapCellSizeInput = document.getElementById('snapCellSizeInput');
 const snapTranslateInput = document.getElementById('snapTranslateInput');
 const snapRotateInput = document.getElementById('snapRotateInput');
 
+const selectModeBtn = document.getElementById('selectModeBtn');
 const moveModeBtn = document.getElementById('moveModeBtn');
 const rotateModeBtn = document.getElementById('rotateModeBtn');
 const scaleModeBtn = document.getElementById('scaleModeBtn');
@@ -83,6 +84,10 @@ if (measureModeBtn) {
   measureModeBtn.setAttribute('aria-pressed', 'false');
 }
 
+if (selectModeBtn) {
+  selectModeBtn.setAttribute('aria-pressed', 'false');
+}
+
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
 const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -95,6 +100,7 @@ let rotateAroundWorld = true;
 let isAdvancedMode = false;
 let isMeasureMode = false;
 let lastTransformMode = 'translate';
+let currentTransformMode = 'translate';
 
 const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
 const BASE_GRID_DIVISIONS = 40;
@@ -145,6 +151,14 @@ const multiSelectionTempMatrix4 = new THREE.Matrix4();
 const multiSelectionTempPosition = new THREE.Vector3();
 const multiSelectionTempQuaternion = new THREE.Quaternion();
 const multiSelectionTempScale = new THREE.Vector3();
+
+const flipTempMatrix = new THREE.Matrix4();
+const flipTempMatrix2 = new THREE.Matrix4();
+const flipTempMatrix3 = new THREE.Matrix4();
+const flipTempMatrix4 = new THREE.Matrix4();
+const flipTempPosition = new THREE.Vector3();
+const flipTempQuaternion = new THREE.Quaternion();
+const flipTempScale = new THREE.Vector3();
 
 let multiSelectionTransformState = null;
 
@@ -885,21 +899,38 @@ function updateBottomControlsVisibility() {
     updateRotationModeUi();
   }
 
-  if (moveModeBtn) moveModeBtn.disabled = !hasSelection;
-  if (rotateModeBtn) rotateModeBtn.disabled = !hasSelection;
-  if (scaleModeBtn) scaleModeBtn.disabled = !hasSelection;
+  const isSelectMode = currentTransformMode === 'select';
 
-  if (moveModeBtn && rotateModeBtn && scaleModeBtn) {
-    if (!hasSelection || isMeasureMode) {
-      moveModeBtn.classList.remove('active');
-      rotateModeBtn.classList.remove('active');
-      scaleModeBtn.classList.remove('active');
-    } else {
-      const activeMode = transformControls.getMode();
-      moveModeBtn.classList.toggle('active', activeMode === 'translate');
-      rotateModeBtn.classList.toggle('active', activeMode === 'rotate');
-      scaleModeBtn.classList.toggle('active', activeMode === 'scale');
-    }
+  if (selectModeBtn) {
+    const disabled = !isAdvancedMode || isMeasureMode;
+    selectModeBtn.disabled = disabled;
+    const active = !disabled && isSelectMode;
+    selectModeBtn.classList.toggle('active', active);
+    selectModeBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+
+  if (moveModeBtn) {
+    const disabled = !hasSelection || isMeasureMode;
+    moveModeBtn.disabled = disabled;
+    const active = !disabled && currentTransformMode === 'translate';
+    moveModeBtn.classList.toggle('active', active);
+    moveModeBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+
+  if (rotateModeBtn) {
+    const disabled = !hasSelection || isMeasureMode;
+    rotateModeBtn.disabled = disabled;
+    const active = !disabled && currentTransformMode === 'rotate';
+    rotateModeBtn.classList.toggle('active', active);
+    rotateModeBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+
+  if (scaleModeBtn) {
+    const disabled = !hasSelection || isMeasureMode;
+    scaleModeBtn.disabled = disabled;
+    const active = !disabled && currentTransformMode === 'scale';
+    scaleModeBtn.classList.toggle('active', active);
+    scaleModeBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
 
   if (measureModeBtn) {
@@ -973,7 +1004,11 @@ function updateSelectionTransformAnchor({ resetOrientation = true } = {}) {
 
 function updateTransformControls() {
   resetMultiSelectionTransformState();
-  if (!isAdvancedMode || selectedMeshes.size === 0) {
+  if (
+    !isAdvancedMode ||
+    selectedMeshes.size === 0 ||
+    currentTransformMode === 'select'
+  ) {
     transformControls.detach();
     return;
   }
@@ -1004,7 +1039,10 @@ function clearSelection() {
 function handleMeshClick(mesh, shiftKey) {
   if (!mesh || !mesh.isMesh) return;
 
-  if (shiftKey) {
+  const additiveSelection =
+    shiftKey || (isAdvancedMode && currentTransformMode === 'select');
+
+  if (additiveSelection) {
     if (selectedMeshes.has(mesh)) {
       selectedMeshes.delete(mesh);
       setMeshHighlight(mesh, false);
@@ -2463,6 +2501,7 @@ advancedModeButton.addEventListener('click', () => {
 
 function syncAdvancedPanelFromSelection() {
   const hasSingle = selectedMeshes.size === 1;
+  const selectionCount = selectedMeshes.size;
   const inputs = [
     posXInput, posYInput, posZInput,
     rotXInput, rotYInput, rotZInput,
@@ -2470,10 +2509,10 @@ function syncAdvancedPanelFromSelection() {
   ];
 
   inputs.forEach((el) => { el.disabled = !hasSingle || !isAdvancedMode; });
+  const allowFlip = isAdvancedMode && selectionCount > 0;
   flipButtons.forEach(({ btn }) => {
-    const disabled = !hasSingle || !isAdvancedMode;
-    btn.disabled = disabled;
-    if (disabled) {
+    btn.disabled = !allowFlip;
+    if (!allowFlip || selectionCount !== 1) {
       btn.classList.remove('active');
       btn.setAttribute('aria-pressed', 'false');
     }
@@ -2563,16 +2602,70 @@ function applyAdvancedInputs() {
 });
 
 function flipSelectedAxis(axis) {
-  if (!isAdvancedMode || selectedMeshes.size !== 1) return;
-  const mesh = [...selectedMeshes][0];
-  const flipped = -mesh.scale[axis];
-  mesh.scale[axis] = Object.is(flipped, -0) ? 0 : flipped;
-  const entry = flipButtons.find((item) => item.axis === axis);
-  if (entry?.btn) {
-    const isFlipped = mesh.scale[axis] < 0;
-    entry.btn.classList.toggle('active', isFlipped);
-    entry.btn.setAttribute('aria-pressed', isFlipped ? 'true' : 'false');
+  if (!isAdvancedMode || selectedMeshes.size === 0) return;
+
+  if (selectedMeshes.size === 1) {
+    const mesh = [...selectedMeshes][0];
+    const flipped = -mesh.scale[axis];
+    mesh.scale[axis] = Object.is(flipped, -0) ? 0 : flipped;
+    const entry = flipButtons.find((item) => item.axis === axis);
+    if (entry?.btn) {
+      const isFlipped = mesh.scale[axis] < 0;
+      entry.btn.classList.toggle('active', isFlipped);
+      entry.btn.setAttribute('aria-pressed', isFlipped ? 'true' : 'false');
+    }
+  } else {
+    updateSelectionTransformAnchor({ resetOrientation: false });
+    const center = selectionTransformAnchor.position;
+
+    const scaleX = axis === 'x' ? -1 : 1;
+    const scaleY = axis === 'y' ? -1 : 1;
+    const scaleZ = axis === 'z' ? -1 : 1;
+
+    flipTempMatrix.makeTranslation(-center.x, -center.y, -center.z);
+    flipTempMatrix2.makeTranslation(center.x, center.y, center.z);
+    flipTempMatrix3.makeScale(scaleX, scaleY, scaleZ);
+    const reflectionMatrix = flipTempMatrix4
+      .copy(flipTempMatrix2)
+      .multiply(flipTempMatrix3)
+      .multiply(flipTempMatrix);
+
+    selectedMeshes.forEach((mesh) => {
+      if (!mesh?.isObject3D || !mesh.parent) return;
+
+      mesh.updateMatrixWorld(true);
+
+      flipTempMatrix3.copy(reflectionMatrix).multiply(mesh.matrixWorld);
+
+      flipTempMatrix2.copy(mesh.parent.matrixWorld).invert();
+      flipTempMatrix2.multiply(flipTempMatrix3);
+      flipTempMatrix2.decompose(
+        flipTempPosition,
+        flipTempQuaternion,
+        flipTempScale
+      );
+
+      mesh.position.copy(flipTempPosition);
+      mesh.quaternion.copy(flipTempQuaternion);
+      mesh.scale.copy(flipTempScale);
+
+      ['x', 'y', 'z'].forEach((axisKey) => {
+        if (Object.is(mesh.scale[axisKey], -0)) {
+          mesh.scale[axisKey] = 0;
+        }
+      });
+
+      mesh.updateMatrix();
+      mesh.updateMatrixWorld(true);
+    });
+
+    flipButtons.forEach(({ btn }) => {
+      if (!btn) return;
+      btn.classList.remove('active');
+      btn.setAttribute('aria-pressed', 'false');
+    });
   }
+
   updateGridExtents();
   updateSceneObjectsList();
   syncAdvancedPanelFromSelection();
@@ -2615,14 +2708,27 @@ function setTransformMode(mode, { fromMeasure = false } = {}) {
     setMeasureMode(false);
   }
 
-  transformControls.setMode(mode);
+  currentTransformMode = mode;
+  transformControls.enabled = mode !== 'select';
+
+  if (mode !== 'select') {
+    transformControls.setMode(mode);
+  } else {
+    transformControls.detach();
+  }
+
   lastTransformMode = mode;
+  updateTransformControls();
   updateBottomControlsVisibility();
 }
 
 moveModeBtn.addEventListener('click', () => setTransformMode('translate'));
 rotateModeBtn.addEventListener('click', () => setTransformMode('rotate'));
 scaleModeBtn.addEventListener('click', () => setTransformMode('scale'));
+
+if (selectModeBtn) {
+  selectModeBtn.addEventListener('click', () => setTransformMode('select'));
+}
 
 if (measureModeBtn) {
   measureModeBtn.addEventListener('click', () => {
