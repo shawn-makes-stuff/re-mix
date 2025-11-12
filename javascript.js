@@ -407,6 +407,101 @@ function updateGridExtents() {
   }
 }
 
+function _averageNormalOutwardDot(geometry) {
+  const g = geometry;
+  const pos = g.getAttribute('position');
+  if (!pos || pos.itemSize !== 3) return 0; // can't tell
+
+  // Ensure we have normals to evaluate
+  if (!g.getAttribute('normal')) g.computeVertexNormals();
+  const nor = g.getAttribute('normal');
+
+  // Compute centroid in object space
+  const centroid = new THREE.Vector3();
+  const v = new THREE.Vector3();
+  const count = pos.count;
+  for (let i = 0; i < count; i++) {
+    v.fromBufferAttribute(pos, i);
+    centroid.add(v);
+  }
+  centroid.multiplyScalar(1 / Math.max(count, 1));
+
+  // Average dot((p - centroid), normal)
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    v.fromBufferAttribute(pos, i).sub(centroid).normalize();
+    const nx = nor.getX(i), ny = nor.getY(i), nz = nor.getZ(i);
+    sum += v.x * nx + v.y * ny + v.z * nz;
+  }
+  return sum / Math.max(count, 1);
+}
+
+/** Flip triangle winding in-place (and fix normals) for a BufferGeometry. */
+function _flipWindingInPlace(geometry) {
+  const g = geometry;
+  // If indexed, swap each triangle's last two indices. If non-indexed, swap
+  // vertex #1 and #2 of every triangle directly in the position (and normal) arrays.
+  if (g.index) {
+    const idx = g.index;
+    for (let i = 0; i < idx.count; i += 3) {
+      const a = idx.getX(i);
+      const b = idx.getX(i + 1);
+      const c = idx.getX(i + 2);
+      idx.setX(i, a);
+      idx.setX(i + 1, c);
+      idx.setX(i + 2, b);
+    }
+    idx.needsUpdate = true;
+  } else {
+    const pos = g.getAttribute('position');
+    const nor = g.getAttribute('normal');
+    const tmp = [0, 0, 0];
+    for (let i = 0; i < pos.count; i += 3) {
+      // swap vertex 1 and 2 positions
+      for (let k = 0; k < 3; k++) tmp[k] = pos.getX(i + 1 + (k === 0 ? 0 : 0));
+      // swap x
+      let x1 = pos.getX(i + 1), y1 = pos.getY(i + 1), z1 = pos.getZ(i + 1);
+      let x2 = pos.getX(i + 2), y2 = pos.getY(i + 2), z2 = pos.getZ(i + 2);
+      pos.setXYZ(i + 1, x2, y2, z2);
+      pos.setXYZ(i + 2, x1, y1, z1);
+
+      if (nor) {
+        x1 = nor.getX(i + 1); y1 = nor.getY(i + 1); z1 = nor.getZ(i + 1);
+        x2 = nor.getX(i + 2); y2 = nor.getY(i + 2); z2 = nor.getZ(i + 2);
+        nor.setXYZ(i + 1, x2, y2, z2);
+        nor.setXYZ(i + 2, x1, y1, z1);
+      }
+    }
+    pos.needsUpdate = true;
+    if (nor) nor.needsUpdate = true;
+  }
+
+  // Recompute normals to ensure unit-length and consistency
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Ensure geometry has outward-facing normals. Returns the same geometry. */
+function fixNormalsForGeometry(geometry) {
+  if (!geometry || !geometry.getAttribute) return geometry;
+
+  // If the geometry has been transformed (applyMatrix4), bounds are stale
+  // until we recompute; also make sure normals exist before testing.
+  if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+
+  const dot = _averageNormalOutwardDot(geometry);
+  if (dot < 0) {
+    _flipWindingInPlace(geometry);
+  } else {
+    // Even if already outward, ensure normals are up to date & normalized
+    geometry.computeVertexNormals();
+  }
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+
 function updateGridCellSize(size) {
   if (!(size > 0)) {
     if (snapCellSizeInput) {
@@ -1450,13 +1545,9 @@ fileInput.addEventListener('change', async (e) => {
         }
       } else if (extension === 'stl') {
         const geometry = stlLoader.parse(arrayBuffer);
-
-        // STL is typically Z-up; Three.js is Y-up. Fix orientation once at import:
-        geometry.rotateX(-Math.PI / 2);
-
+        geometry.rotateX(-Math.PI / 2); // Z-up → Y-up
         if (!geometry.attributes.normal) geometry.computeVertexNormals();
-
-        // Now do your centering/BB work in the corrected orientation:
+        fixNormalsForGeometry(geometry);  // 🔧 ensure outward
         geometry.computeBoundingBox();
         const boundingBox = geometry.boundingBox;
         if (boundingBox) {
@@ -1466,15 +1557,8 @@ fileInput.addEventListener('change', async (e) => {
           geometry.computeBoundingBox();
           geometry.computeBoundingSphere();
         }
-
-        const baseName = file.name.replace(/\.[^.]*$/u, '') ||
-          `Part ${partLibrary.length + 1}`;
-
-        partLibrary.push({
-          name: baseName,
-          geometry,
-          category: null
-        });
+        const baseName = file.name.replace(/\.[^.]*$/u, '') || `Part ${partLibrary.length + 1}`;
+        partLibrary.push({ name: baseName, geometry, category: null });
         loadedAny = true;
       }
     } catch (err) {
@@ -1577,6 +1661,7 @@ function extractPartsFromObject(root) {
     const geom = child.geometry.clone();
     geom.applyMatrix4(child.matrixWorld);
     if (!geom.attributes.normal) geom.computeVertexNormals();
+    fixNormalsForGeometry(geom);  // 🔧 ensure outward
 
     const rawName = child.name || '';
     let name = rawName;
