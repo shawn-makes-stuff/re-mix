@@ -174,6 +174,92 @@ let clipboardSelection = null;
 const loader = new FBXLoader();
 const stlLoader = new STLLoader();
 
+const stlUpAxisScratch = {
+  a: new THREE.Vector3(),
+  b: new THREE.Vector3(),
+  c: new THREE.Vector3(),
+  ab: new THREE.Vector3(),
+  ac: new THREE.Vector3(),
+  normal: new THREE.Vector3()
+};
+
+function inferStlUpAxis(geometry) {
+  const positionAttr = geometry.attributes.position;
+  if (!positionAttr || positionAttr.count < 3) return null;
+
+  const { a, b, c, ab, ac, normal } = stlUpAxisScratch;
+  const axisScores = { x: 0, y: 0, z: 0 };
+  const axisSignedScores = { x: 0, y: 0, z: 0 };
+
+  const iterateTriangle = (ia, ib, ic) => {
+    a.fromBufferAttribute(positionAttr, ia);
+    b.fromBufferAttribute(positionAttr, ib);
+    c.fromBufferAttribute(positionAttr, ic);
+
+    ab.subVectors(b, a);
+    ac.subVectors(c, a);
+    normal.crossVectors(ab, ac);
+    const area = normal.length() * 0.5;
+    if (area === 0) return;
+    normal.normalize();
+
+    axisScores.x += Math.abs(normal.x) * area;
+    axisScores.y += Math.abs(normal.y) * area;
+    axisScores.z += Math.abs(normal.z) * area;
+
+    axisSignedScores.x += normal.x * area;
+    axisSignedScores.y += normal.y * area;
+    axisSignedScores.z += normal.z * area;
+  };
+
+  if (geometry.index) {
+    const index = geometry.index;
+    for (let i = 0; i < index.count; i += 3) {
+      iterateTriangle(index.getX(i), index.getX(i + 1), index.getX(i + 2));
+    }
+  } else {
+    for (let i = 0; i < positionAttr.count; i += 3) {
+      iterateTriangle(i, i + 1, i + 2);
+    }
+  }
+
+  const order = ['x', 'y', 'z']
+    .map((axis) => ({ axis, score: axisScores[axis] }))
+    .sort((a, b) => b.score - a.score);
+
+  const best = order[0];
+  const second = order[1];
+  if (!best || best.score <= 0) return null;
+
+  if (second && second.score > 0 && best.score / second.score < 1.2) {
+    return null;
+  }
+
+  const signedScore = axisSignedScores[best.axis];
+  const absSigned = Math.abs(signedScore);
+  if (absSigned < best.score * 0.05) {
+    return null;
+  }
+
+  return { axis: best.axis, sign: signedScore >= 0 ? 1 : -1 };
+}
+
+function applyUpAxisCorrection(geometry, upInfo) {
+  if (!upInfo) return;
+
+  const { axis, sign } = upInfo;
+
+  if (axis === 'y') {
+    if (sign < 0) {
+      geometry.rotateZ(Math.PI);
+    }
+  } else if (axis === 'z') {
+    geometry.rotateX(sign > 0 ? -Math.PI / 2 : Math.PI / 2);
+  } else if (axis === 'x') {
+    geometry.rotateZ(sign > 0 ? Math.PI / 2 : -Math.PI / 2);
+  }
+}
+
 const dragPreviewMaterial = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   opacity: 0.35,
@@ -1451,6 +1537,9 @@ fileInput.addEventListener('change', async (e) => {
       } else if (extension === 'stl') {
         const geometry = stlLoader.parse(arrayBuffer);
         if (!geometry.attributes.normal) geometry.computeVertexNormals();
+
+        geometry.computeBoundingBox();
+        applyUpAxisCorrection(geometry, inferStlUpAxis(geometry));
 
         geometry.computeBoundingBox();
         const boundingBox = geometry.boundingBox;
