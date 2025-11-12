@@ -1504,6 +1504,65 @@ fileInput.addEventListener('change', async (e) => {
   fileInput.value = '';
 });
 
+async function loadDefaultLogoPart() {
+  if (partLibrary.length > 0) {
+    return;
+  }
+
+  const defaultFileName = 'remix.fbx';
+  const defaultUrl = new URL(defaultFileName, window.location.href).toString();
+
+  try {
+    const response = await fetch(defaultUrl);
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const beforeCount = partLibrary.length;
+    const root = loader.parse(arrayBuffer, '');
+    extractPartsFromObject(root);
+    disposeObject(root);
+
+    const addedCount = partLibrary.length - beforeCount;
+    if (addedCount <= 0) {
+      return;
+    }
+
+    if (fileNameLabel) {
+      fileNameLabel.textContent = defaultFileName;
+    }
+
+    updatePartsListUI();
+
+    const addedIndices = [];
+    for (let i = beforeCount; i < partLibrary.length; i += 1) {
+      addedIndices.push(i);
+    }
+
+    const preferredIndex = addedIndices.find((index) => {
+      const part = partLibrary[index];
+      return part?.name === 'remix' && part?.category === 'Logo';
+    }) ?? addedIndices[0];
+
+    const mesh = addPartInstance(preferredIndex);
+    if (!mesh) {
+      return;
+    }
+
+    clearSelection();
+    selectedMeshes.add(mesh);
+    setMeshHighlight(mesh, true);
+    updateBottomControlsVisibility();
+    updateTransformControls();
+    syncAdvancedPanelFromSelection();
+    frameScene();
+    pushHistory();
+  } catch (err) {
+    console.warn('Failed to load default logo FBX:', err);
+  }
+}
+
 function extractPartsFromObject(root) {
   root.updateMatrixWorld(true);
 
@@ -3171,3 +3230,4 @@ setAdvancedMode(false); // start in basic mode
 resetHistory();
 pushHistory();
 updateHistoryButtons();
+loadDefaultLogoPart();
