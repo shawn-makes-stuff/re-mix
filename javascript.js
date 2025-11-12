@@ -99,6 +99,11 @@ let lastTransformMode = 'translate';
 const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
 const BASE_GRID_DIVISIONS = 40;
 const GRID_WORLD_SIZE = DEFAULT_GRID_CELL_SIZE * BASE_GRID_DIVISIONS; // generous play area
+const GRID_MARGIN_CELLS = 2;
+const MIN_GRID_DIVISIONS = BASE_GRID_DIVISIONS;
+
+let currentGridDivisions = BASE_GRID_DIVISIONS;
+let currentGridWorldSize = GRID_WORLD_SIZE;
 let gridSnapEnabled = false;
 let advancedGridSnapEnabled = false;
 let gridCellSize = DEFAULT_GRID_CELL_SIZE;
@@ -268,6 +273,7 @@ transformControls.addEventListener('dragging-changed', (e) => {
 transformControls.addEventListener('objectChange', () => {
   applyMultiSelectionTransform();
   if (isAdvancedMode) syncAdvancedPanelFromSelection();
+  updateGridExtents();
 });
 
 // Lights
@@ -284,7 +290,6 @@ dirLight2.position.set(-5, 8, -5);
 scene.add(dirLight2);
 
 // Floor & grid
-const floorSize = GRID_WORLD_SIZE;
 const floorMaterial = new THREE.MeshStandardMaterial({
   color: 0x1a1a1a,
   roughness: 1.0,
@@ -294,31 +299,99 @@ const floorMaterial = new THREE.MeshStandardMaterial({
   opacity: 0.08,
   depthWrite: false
 });
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(floorSize, floorSize),
+let floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(currentGridWorldSize, currentGridWorldSize),
   floorMaterial
 );
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = 0;
 scene.add(floor);
 
-const gridHelper = new THREE.GridHelper(
-  GRID_WORLD_SIZE,
-  BASE_GRID_DIVISIONS,
-  0x444444,
-  0x242424
-);
-const gridMaterials = Array.isArray(gridHelper.material)
-  ? gridHelper.material
-  : [gridHelper.material];
-gridMaterials.forEach((mat) => {
-  mat.transparent = true;
-  mat.opacity = 0.55;
-  mat.depthWrite = false;
-});
-gridHelper.renderOrder = 1;
-gridHelper.position.y = 0.002;
+let gridHelper = createGridHelper(currentGridWorldSize, currentGridDivisions);
 scene.add(gridHelper);
+
+function createGridHelper(worldSize, divisions) {
+  const helper = new THREE.GridHelper(worldSize, divisions, 0x444444, 0x242424);
+  const materials = Array.isArray(helper.material)
+    ? helper.material
+    : [helper.material];
+  materials.forEach((mat) => {
+    if (!mat) return;
+    mat.transparent = true;
+    mat.opacity = 0.55;
+    mat.depthWrite = false;
+  });
+  helper.renderOrder = 1;
+  helper.position.y = 0.002;
+  return helper;
+}
+
+function disposeGridHelper(helper) {
+  if (!helper) return;
+  helper.geometry?.dispose?.();
+  const materials = Array.isArray(helper.material)
+    ? helper.material
+    : [helper.material];
+  materials.forEach((mat) => mat?.dispose?.());
+}
+
+function refreshGridGeometry() {
+  currentGridWorldSize = currentGridDivisions * gridCellSize;
+
+  floor.geometry?.dispose?.();
+  floor.geometry = new THREE.PlaneGeometry(
+    currentGridWorldSize,
+    currentGridWorldSize
+  );
+
+  if (gridHelper) {
+    gridHelper.parent?.remove(gridHelper);
+    disposeGridHelper(gridHelper);
+  }
+
+  gridHelper = createGridHelper(currentGridWorldSize, currentGridDivisions);
+  scene.add(gridHelper);
+}
+
+const gridContentBounds = new THREE.Box3();
+
+function updateGridExtents() {
+  const margin = GRID_MARGIN_CELLS * gridCellSize;
+  let requiredHalfSize = (MIN_GRID_DIVISIONS * gridCellSize) / 2;
+
+  if (placedPartsGroup.children.length > 0) {
+    placedPartsGroup.updateMatrixWorld(true);
+    gridContentBounds.setFromObject(placedPartsGroup);
+
+    const maxExtentX = Math.max(
+      Math.abs(gridContentBounds.min.x),
+      Math.abs(gridContentBounds.max.x)
+    );
+    const maxExtentZ = Math.max(
+      Math.abs(gridContentBounds.min.z),
+      Math.abs(gridContentBounds.max.z)
+    );
+    const maxExtent = Math.max(maxExtentX, maxExtentZ);
+    requiredHalfSize = Math.max(requiredHalfSize, maxExtent + margin);
+  }
+
+  const targetWorldSize = requiredHalfSize * 2;
+  let targetDivisions = Math.ceil(targetWorldSize / gridCellSize);
+  targetDivisions = Math.max(targetDivisions, MIN_GRID_DIVISIONS);
+  if (targetDivisions % 2 !== 0) {
+    targetDivisions += 1;
+  }
+
+  const newWorldSize = targetDivisions * gridCellSize;
+
+  if (
+    targetDivisions !== currentGridDivisions ||
+    Math.abs(newWorldSize - currentGridWorldSize) > 1e-6
+  ) {
+    currentGridDivisions = targetDivisions;
+    refreshGridGeometry();
+  }
+}
 
 function updateGridCellSize(size) {
   if (!(size > 0)) {
@@ -330,9 +403,7 @@ function updateGridCellSize(size) {
   const prevSize = gridCellSize;
   gridCellSize = size;
 
-  const scale = size / DEFAULT_GRID_CELL_SIZE;
-  floor.scale.set(scale, 1, scale);
-  gridHelper.scale.set(scale, 1, scale);
+  updateGridExtents();
 
   if (snapCellSizeInput) {
     snapCellSizeInput.value = size.toString();
@@ -376,6 +447,7 @@ const selectedMaterial = new THREE.MeshStandardMaterial({
 });
 
 scene.add(placedPartsGroup);
+updateGridExtents();
 
 /* -------------------------------------------------------------------------- */
 /* MEASUREMENT TOOL                                                            */
@@ -1054,6 +1126,7 @@ function applyGridSnapToSelection() {
   if (selectedMeshes.size === 1) {
     const [mesh] = selectedMeshes;
     applyGridSnap(mesh);
+    updateGridExtents();
     return;
   }
 
@@ -1100,6 +1173,7 @@ function applyGridSnapToSelection() {
     mesh.updateMatrixWorld(true);
   });
 
+  updateGridExtents();
   selectionTransformAnchor.position.x += deltaX;
   selectionTransformAnchor.position.z += deltaZ;
   selectionTransformAnchor.updateMatrixWorld(true);
@@ -1188,6 +1262,7 @@ function clearPlacedParts() {
     child.geometry?.dispose();
   });
   placedPartsGroup.clear();
+  updateGridExtents();
   instanceIdLookup.clear();
   sceneRowByInstanceId.clear();
   clearSelection();
@@ -1243,6 +1318,7 @@ function loadState(state) {
     registerMeshInstance(mesh);
   });
 
+  updateGridExtents();
   nextInstanceId = Math.max(nextInstanceId, maxInstanceId + 1);
 
   clearSelection();
@@ -1257,6 +1333,7 @@ function resetHistory() {
 }
 
 function pushHistory() {
+  updateGridExtents();
   const snapshot = serializeState();
   history = history.slice(0, historyIndex + 1);
   history.push(snapshot);
@@ -1830,6 +1907,7 @@ function addPartInstance(partIndex, initialPosition = null) {
 
   mesh.castShadow = mesh.receiveShadow = true;
   placedPartsGroup.add(mesh);
+  updateGridExtents();
   registerMeshInstance(mesh);
 
   if (isFirst) {
@@ -1977,6 +2055,7 @@ function deleteMeshInstance(mesh) {
   unregisterMeshInstance(mesh);
   mesh.geometry?.dispose();
   placedPartsGroup.remove(mesh);
+  updateGridExtents();
 
   if (wasSelected) {
     updateBottomControlsVisibility();
@@ -2009,6 +2088,7 @@ function duplicateMeshInstance(mesh) {
 
   clone.castShadow = clone.receiveShadow = true;
   placedPartsGroup.add(clone);
+  updateGridExtents();
   registerMeshInstance(clone);
 
   clearSelection();
@@ -2157,6 +2237,7 @@ function rotateSelectedPart(deltaSteps) {
     }
   });
 
+  updateGridExtents();
   pushHistory();
 }
 
@@ -2177,6 +2258,7 @@ function rotateSelectedPartAroundCenter(deltaSteps) {
     }
   });
 
+  updateGridExtents();
   pushHistory();
 }
 
@@ -2238,6 +2320,7 @@ function deleteSelected() {
     mesh.geometry?.dispose();
     placedPartsGroup.remove(mesh);
   });
+  updateGridExtents();
   updateSceneObjectsList();
   pushHistory();
 }
@@ -2332,6 +2415,7 @@ function pasteClipboardSelection() {
     return false;
   }
 
+  updateGridExtents();
   updateSceneObjectsList();
   updateBottomControlsVisibility();
   updateTransformControls();
@@ -2464,6 +2548,7 @@ function applyAdvancedInputs() {
     applyGridSnap(mesh);
   }
 
+  updateGridExtents();
   updateSceneObjectsList();
   syncAdvancedPanelFromSelection();
   pushHistory();
@@ -2488,6 +2573,7 @@ function flipSelectedAxis(axis) {
     entry.btn.classList.toggle('active', isFlipped);
     entry.btn.setAttribute('aria-pressed', isFlipped ? 'true' : 'false');
   }
+  updateGridExtents();
   updateSceneObjectsList();
   syncAdvancedPanelFromSelection();
   updateTransformControls();
