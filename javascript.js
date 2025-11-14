@@ -247,8 +247,6 @@ function toggleSidebar(force) {
     const open = force !== undefined ? force : !sidebar.classList.contains('open');
     sidebar.classList.toggle('open', open);
   }
-
-  updateAxisWidgetPlacement();
 }
 
 menuButton.addEventListener('click', () => toggleSidebar());
@@ -298,256 +296,6 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.1;
 controls.target.set(0, 0, 0);
-
-const AXIS_WIDGET_SIZE = 110;
-const axisRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-axisRenderer.setPixelRatio(window.devicePixelRatio);
-axisRenderer.setSize(AXIS_WIDGET_SIZE, AXIS_WIDGET_SIZE);
-axisRenderer.setClearColor(0x000000, 0);
-
-const axisMount = document.getElementById('axisWidgetMount');
-const axisOverlayElement = axisMount ?? axisRenderer.domElement;
-const axisDragSurface = axisRenderer.domElement;
-
-if (axisMount) {
-  axisMount.style.width = `${AXIS_WIDGET_SIZE}px`;
-  axisMount.style.height = `${AXIS_WIDGET_SIZE}px`;
-  axisMount.appendChild(axisRenderer.domElement);
-  axisMount.style.pointerEvents = 'none';
-} else {
-  axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
-  axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
-  axisRenderer.domElement.style.position = 'absolute';
-  axisRenderer.domElement.style.top = '16px';
-  axisRenderer.domElement.style.right = '16px';
-  axisRenderer.domElement.style.zIndex = '6';
-  container.appendChild(axisRenderer.domElement);
-}
-
-axisRenderer.domElement.classList.add('axis-widget-canvas');
-axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
-axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
-
-axisRenderer.domElement.style.pointerEvents = 'auto';
-axisRenderer.domElement.style.touchAction = 'none';
-
-function isSidebarVisiblyOpen() {
-  if (window.innerWidth > 820) {
-    return sidebar.style.transform !== 'translateX(100%)';
-  }
-
-  return sidebar.classList.contains('open');
-}
-
-function updateAxisWidgetPlacement() {
-  if (!axisRenderer || !axisRenderer.domElement || !axisOverlayElement) return;
-
-  const style = axisOverlayElement.style;
-  const baseOffset = 16;
-  style.top = `${baseOffset}px`;
-  if (window.innerWidth > 820 && isSidebarVisiblyOpen()) {
-    style.right = `${sidebar.offsetWidth + baseOffset}px`;
-  } else {
-    style.right = `${baseOffset}px`;
-  }
-}
-
-const axisScene = new THREE.Scene();
-const axisCamera = new THREE.PerspectiveCamera(40, 1, 0.1, 10);
-axisCamera.position.set(0, 0, 3);
-axisCamera.lookAt(0, 0, 0);
-
-const axisGroup = new THREE.Group();
-axisScene.add(axisGroup);
-
-const axisRing = new THREE.Mesh(
-  new THREE.SphereGeometry(0.32, 32, 32),
-  new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.08,
-    depthTest: false,
-    depthWrite: false
-  })
-);
-axisGroup.add(axisRing);
-
-const axesHelper = new THREE.AxesHelper(0.9);
-axesHelper.material.depthTest = false;
-axesHelper.material.depthWrite = false;
-axisGroup.add(axesHelper);
-
-const axisPickTargets = [];
-const axisSphereGeometry = new THREE.SphereGeometry(0.13, 32, 32);
-
-function createAxisLabelSprite(text, color) {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, size, size);
-  const hex = `#${color.toString(16).padStart(6, '0')}`;
-  ctx.fillStyle = 'rgba(10, 10, 10, 0.72)';
-  ctx.beginPath();
-  ctx.arc(size / 2, size / 2, size * 0.48, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = hex;
-  ctx.lineWidth = size * 0.08;
-  ctx.stroke();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '64px "Inter", "Segoe UI", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, size / 2, size / 2);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
-  const sprite = new THREE.Sprite(material);
-  sprite.scale.set(0.55, 0.55, 0.55);
-  sprite.renderOrder = 2;
-  return sprite;
-}
-
-const axisDirections = [
-  { label: '+X', dir: new THREE.Vector3(1, 0, 0), color: 0xff6767 },
-  { label: '-X', dir: new THREE.Vector3(-1, 0, 0), color: 0xa94b4b },
-  { label: '+Y', dir: new THREE.Vector3(0, 1, 0), color: 0x6be36b },
-  { label: '-Y', dir: new THREE.Vector3(0, -1, 0), color: 0x4da54d },
-  { label: '+Z', dir: new THREE.Vector3(0, 0, 1), color: 0x6b8fe3 },
-  { label: '-Z', dir: new THREE.Vector3(0, 0, -1), color: 0x4a62a9 }
-];
-
-axisDirections.forEach(({ label, dir, color }) => {
-  const sphereMaterial = new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity: 0.9,
-    depthTest: false
-  });
-  const sphere = new THREE.Mesh(axisSphereGeometry, sphereMaterial);
-  sphere.position.copy(dir.clone().multiplyScalar(0.9));
-  sphere.userData.snapDirection = dir.clone();
-  sphere.renderOrder = 1;
-  axisGroup.add(sphere);
-  axisPickTargets.push(sphere);
-
-  const labelSprite = createAxisLabelSprite(label, color);
-  labelSprite.position.copy(dir.clone().multiplyScalar(1.25));
-  axisGroup.add(labelSprite);
-});
-
-const axisRaycaster = new THREE.Raycaster();
-const axisPointer = new THREE.Vector2();
-let axisDragging = false;
-let axisDragPointerId = null;
-let axisLastPointer = { x: 0, y: 0 };
-
-function updateAxisWidgetSize() {
-  axisRenderer.setPixelRatio(window.devicePixelRatio);
-  axisRenderer.setSize(AXIS_WIDGET_SIZE, AXIS_WIDGET_SIZE);
-  if (axisMount) {
-    axisMount.style.width = `${AXIS_WIDGET_SIZE}px`;
-    axisMount.style.height = `${AXIS_WIDGET_SIZE}px`;
-  } else {
-    axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
-    axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
-  }
-  updateAxisWidgetPlacement();
-}
-
-updateAxisWidgetPlacement();
-
-function projectAxisPointer(event) {
-  const rect = axisRenderer.domElement.getBoundingClientRect();
-  axisPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  axisPointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-}
-
-function intersectAxisTargets() {
-  axisRaycaster.setFromCamera(axisPointer, axisCamera);
-  return axisRaycaster.intersectObjects(axisPickTargets, false);
-}
-
-function snapViewToDirection(direction) {
-  if (!direction) return;
-  const target = controls.target.clone();
-  const distance = camera.position.distanceTo(target) || 10;
-  const dir = direction.clone().normalize();
-  const safeDir = dir.lengthSq() > 0 ? dir : new THREE.Vector3(0, 0, 1);
-  camera.position.copy(target).addScaledVector(safeDir, distance);
-
-  if (Math.abs(safeDir.y) > 0.999) {
-    camera.up.set(0, 0, safeDir.y > 0 ? -1 : 1);
-  } else {
-    camera.up.set(0, 1, 0);
-  }
-
-  controls.update();
-}
-
-axisRenderer.domElement.addEventListener('pointerdown', (event) => {
-  projectAxisPointer(event);
-  const intersections = intersectAxisTargets();
-
-  if (intersections.length > 0) {
-    event.preventDefault();
-    event.stopPropagation();
-    const snapDirection = intersections[0].object.userData.snapDirection;
-    snapViewToDirection(snapDirection);
-    return;
-  }
-
-  axisDragging = true;
-  axisDragPointerId = event.pointerId;
-  axisLastPointer = { x: event.clientX, y: event.clientY };
-  axisRenderer.domElement.setPointerCapture(event.pointerId);
-  axisDragSurface.classList.add('dragging');
-  event.preventDefault();
-  event.stopPropagation();
-});
-
-axisRenderer.domElement.addEventListener('pointermove', (event) => {
-  if (!axisDragging || event.pointerId !== axisDragPointerId) return;
-  const deltaX = event.clientX - axisLastPointer.x;
-  const deltaY = event.clientY - axisLastPointer.y;
-  axisLastPointer = { x: event.clientX, y: event.clientY };
-  const rotateSpeed = 0.01;
-  controls.rotateLeft(deltaX * rotateSpeed);
-  controls.rotateUp(deltaY * rotateSpeed);
-  controls.update();
-  event.preventDefault();
-  event.stopPropagation();
-});
-
-const endAxisDrag = (event) => {
-  if (!axisDragging) return;
-  if (event && event.pointerId != null && event.pointerId !== axisDragPointerId) {
-    return;
-  }
-  axisDragging = false;
-  axisDragSurface.classList.remove('dragging');
-  if (event && event.pointerId != null) {
-    axisRenderer.domElement.releasePointerCapture(event.pointerId);
-  }
-};
-
-axisRenderer.domElement.addEventListener('pointerup', (event) => {
-  endAxisDrag(event);
-  event.preventDefault();
-  event.stopPropagation();
-});
-
-axisRenderer.domElement.addEventListener('pointerleave', (event) => {
-  endAxisDrag(event);
-  event.preventDefault();
-  event.stopPropagation();
-});
-
-axisRenderer.domElement.addEventListener('pointercancel', (event) => {
-  endAxisDrag(event);
-  event.preventDefault();
-  event.stopPropagation();
-});
 
 // Transform controls
 const transformControls = new TransformControls(camera, renderer.domElement);
@@ -3839,14 +3587,12 @@ window.addEventListener('mousemove', (e) => {
   const max = 600;
   newWidth = Math.max(min, Math.min(max, newWidth));
   sidebar.style.width = `${newWidth}px`;
-  updateAxisWidgetPlacement();
 });
 
 window.addEventListener('mouseup', () => {
   if (!isResizingSidebar) return;
   isResizingSidebar = false;
   document.body.style.cursor = '';
-  updateAxisWidgetPlacement();
 });
 
 // Scene panel height (vertical) resize
@@ -3911,15 +3657,12 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  updateAxisWidgetSize();
 });
 
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
   renderer.render(scene, camera);
-  axisGroup.quaternion.copy(camera.quaternion).invert();
-  axisRenderer.render(axisScene, axisCamera);
 }
 animate();
 

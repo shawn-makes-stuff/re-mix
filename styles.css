@@ -31,32 +31,6 @@ body {
   height: 100vh;
 }
 
-.axis-widget-mount {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 110px;
-  height: 110px;
-  pointer-events: none;
-  z-index: 6;
-}
-
-.axis-widget-canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-  cursor: grab;
-  pointer-events: auto;
-  touch-action: none;
-  background: transparent;
-  user-select: none;
-  border-radius: 50%;
-}
-
-.axis-widget-canvas.dragging {
-  cursor: grabbing;
-}
-
 /* Google icons base */
 .material-symbols-outlined {
   font-variation-settings:
