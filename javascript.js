@@ -3,6 +3,7 @@ import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/cont
 import { FBXLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/FBXLoader.js';
 import { STLLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/STLLoader.js';
 import { TransformControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/TransformControls.js';
+import { mergeGeometries } from 'https://unpkg.com/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   DEFAULT_GRID_CELL_SIZE,
   BASE_GRID_DIVISIONS,
@@ -74,7 +75,12 @@ const {
   measureModeBtn,
   measurementReadout,
   flipButtons,
-  sidebarResizeHandle
+  sidebarResizeHandle,
+  selectionContextMenu,
+  contextCreateTemplateBtn,
+  contextCopySelectionBtn,
+  contextPasteSelectionBtn,
+  contextDeleteSelectionBtn
 } = createDomRefs();
 
 const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -100,6 +106,7 @@ let translationSnapHorizontal = DEFAULT_GRID_CELL_SIZE;
 let translationSnapVertical = DEFAULT_GRID_CELL_SIZE;
 let lastValidTranslationSnapHorizontal = DEFAULT_GRID_CELL_SIZE;
 let lastValidTranslationSnapVertical = DEFAULT_GRID_CELL_SIZE;
+let templateCounter = 1;
 
 if (snapCellSizeInput) {
   snapCellSizeInput.value = gridCellSize.toString();
@@ -142,6 +149,7 @@ const multiSelectionTempQuaternion = new THREE.Quaternion();
 const multiSelectionTempScale = new THREE.Vector3();
 const worldYAxis = new THREE.Vector3(0, 1, 0);
 const worldRotationTempQuaternion = new THREE.Quaternion();
+const templateTempCenter = new THREE.Vector3();
 
 const flipTempMatrix = new THREE.Matrix4();
 const flipTempMatrix2 = new THREE.Matrix4();
@@ -288,6 +296,8 @@ scene.add(selectionTransformAnchor);
 let isTransforming = false;
 let hadTransformDrag = false;   // 👈 did this pointer interaction actually drag the gizmo?
 let pointerDownPos = null;
+const CONTEXT_MENU_DRAG_THRESHOLD_SQ = 6 * 6; // 6px radius tolerance
+let contextMenuPointerInfo = null;
 
 transformControls.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
@@ -1168,6 +1178,7 @@ function updateTransformControls() {
 function clearSelection() {
   selectedMeshes.forEach((mesh) => setMeshHighlight(mesh, false));
   selectedMeshes.clear();
+  hideSelectionContextMenu();
   resetSelectionTransformState();
   updateBottomControlsVisibility();
   updateTransformControls();
@@ -2636,9 +2647,26 @@ const mouse = new THREE.Vector2();
 function onCanvasPointerDown(event) {
   // Track start position so we can distinguish click vs drag
   pointerDownPos = { x: event.clientX, y: event.clientY };
+
+  if (event.button === 2) {
+    contextMenuPointerInfo = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false
+    };
+  }
 }
 
 function onCanvasPointerUp(event) {
+  if (
+    contextMenuPointerInfo &&
+    event.button === 2 &&
+    event.pointerId === contextMenuPointerInfo.pointerId
+  ) {
+    contextMenuPointerInfo.released = true;
+  }
+
   if (!pointerDownPos) return;
 
   const dx = event.clientX - pointerDownPos.x;
@@ -2697,10 +2725,24 @@ function onCanvasPointerUp(event) {
   if (intersects.length > 0) {
     const mesh = intersects[0].object;
     handleMeshClick(mesh, event.shiftKey);
+  } else if (selectedMeshes.size > 0) {
+    clearSelection();
   }
 }
 
 function onCanvasPointerMove(event) {
+  if (
+    contextMenuPointerInfo &&
+    event.pointerId === contextMenuPointerInfo.pointerId &&
+    !contextMenuPointerInfo.released
+  ) {
+    const dx = event.clientX - contextMenuPointerInfo.startX;
+    const dy = event.clientY - contextMenuPointerInfo.startY;
+    if (dx * dx + dy * dy > CONTEXT_MENU_DRAG_THRESHOLD_SQ) {
+      contextMenuPointerInfo.moved = true;
+    }
+  }
+
   if (!isMeasureMode) return;
   if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
   if (event.buttons !== 0) return;
@@ -2713,6 +2755,20 @@ function onCanvasPointerMove(event) {
   }
 }
 
+function onCanvasContextMenu(event) {
+  if (!selectionContextMenu) return;
+  event.preventDefault();
+
+  const pointerInfo = contextMenuPointerInfo;
+  contextMenuPointerInfo = null;
+
+  if (pointerInfo?.moved) {
+    return;
+  }
+
+  showSelectionContextMenu(event.clientX, event.clientY, event);
+}
+
 renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
 renderer.domElement.addEventListener('pointerup', onCanvasPointerUp);
 renderer.domElement.addEventListener('pointermove', onCanvasPointerMove);
@@ -2720,7 +2776,57 @@ renderer.domElement.addEventListener('pointerleave', () => {
   if (isMeasureMode) {
     cancelMeasurementPreview();
   }
+  if (contextMenuPointerInfo) {
+    contextMenuPointerInfo.moved = true;
+  }
 });
+renderer.domElement.addEventListener('pointercancel', () => {
+  contextMenuPointerInfo = null;
+});
+renderer.domElement.addEventListener('contextmenu', onCanvasContextMenu);
+
+document.addEventListener('pointerdown', (event) => {
+  if (!selectionContextMenu) return;
+  if (selectionContextMenu.style.display !== 'block') return;
+  if (selectionContextMenu.contains(event.target)) return;
+  hideSelectionContextMenu();
+});
+
+window.addEventListener('resize', hideSelectionContextMenu);
+window.addEventListener('blur', hideSelectionContextMenu);
+document.addEventListener('scroll', hideSelectionContextMenu, true);
+
+if (contextCreateTemplateBtn) {
+  contextCreateTemplateBtn.addEventListener('click', () => {
+    if (contextCreateTemplateBtn.disabled) return;
+    createTemplateFromSelection();
+    hideSelectionContextMenu();
+  });
+}
+
+if (contextCopySelectionBtn) {
+  contextCopySelectionBtn.addEventListener('click', () => {
+    if (contextCopySelectionBtn.disabled) return;
+    copySelectionToClipboard();
+    hideSelectionContextMenu();
+  });
+}
+
+if (contextPasteSelectionBtn) {
+  contextPasteSelectionBtn.addEventListener('click', () => {
+    if (contextPasteSelectionBtn.disabled) return;
+    pasteClipboardSelection();
+    hideSelectionContextMenu();
+  });
+}
+
+if (contextDeleteSelectionBtn) {
+  contextDeleteSelectionBtn.addEventListener('click', () => {
+    if (contextDeleteSelectionBtn.disabled) return;
+    hideSelectionContextMenu();
+    deleteSelected();
+  });
+}
 
 
 /* -------------------------------------------------------------------------- */
@@ -2852,6 +2958,175 @@ function deleteSelected() {
   updateGridExtents();
   updateSceneObjectsList();
   pushHistory();
+}
+
+function updateSelectionContextMenuState() {
+  if (!selectionContextMenu) return;
+  const hasSelection = selectedMeshes.size > 0;
+  if (contextCopySelectionBtn) {
+    contextCopySelectionBtn.disabled = !hasSelection;
+  }
+  if (contextPasteSelectionBtn) {
+    const hasClipboardItems =
+      !!clipboardSelection && clipboardSelection.items.length > 0;
+    contextPasteSelectionBtn.disabled = !hasClipboardItems;
+  }
+  if (contextDeleteSelectionBtn) {
+    contextDeleteSelectionBtn.disabled = !hasSelection;
+  }
+  if (contextCreateTemplateBtn) {
+    contextCreateTemplateBtn.disabled = selectedMeshes.size < 2;
+  }
+}
+
+function hideSelectionContextMenu() {
+  if (!selectionContextMenu) return;
+  if (selectionContextMenu.style.display === 'none') return;
+  selectionContextMenu.style.display = 'none';
+  selectionContextMenu.style.visibility = '';
+  selectionContextMenu.setAttribute('aria-hidden', 'true');
+}
+
+function showSelectionContextMenu(x, y, triggerEvent) {
+  if (!selectionContextMenu) return;
+  updateSelectionContextMenuState();
+
+  selectionContextMenu.style.visibility = 'hidden';
+  selectionContextMenu.style.display = 'block';
+
+  const menuWidth = selectionContextMenu.offsetWidth;
+  const menuHeight = selectionContextMenu.offsetHeight;
+  const margin = 8;
+
+  let left = x;
+  let top = y;
+
+  if (left + menuWidth > window.innerWidth - margin) {
+    left = window.innerWidth - menuWidth - margin;
+  }
+  if (top + menuHeight > window.innerHeight - margin) {
+    top = window.innerHeight - menuHeight - margin;
+  }
+
+  left = Math.max(margin, left);
+  top = Math.max(margin, top);
+
+  selectionContextMenu.style.left = `${Math.round(left)}px`;
+  selectionContextMenu.style.top = `${Math.round(top)}px`;
+  selectionContextMenu.style.visibility = 'visible';
+  selectionContextMenu.setAttribute('aria-hidden', 'false');
+
+  const isPointerInvocation =
+    !!triggerEvent &&
+    ((triggerEvent.button === 2 || triggerEvent.which === 3) ||
+      (typeof triggerEvent.pointerType === 'string' && triggerEvent.pointerType));
+
+  if (!isPointerInvocation) {
+    const firstEnabledButton = [
+      contextCreateTemplateBtn,
+      contextCopySelectionBtn,
+      contextPasteSelectionBtn,
+      contextDeleteSelectionBtn
+    ].find((btn) => btn && !btn.disabled);
+    firstEnabledButton?.focus({ preventScroll: true });
+  }
+}
+
+function getNextTemplateName() {
+  let maxExistingIndex = 0;
+  partLibrary.forEach((part) => {
+    if (part.category !== 'Templates') return;
+    const match = /^Template\s+(\d+)$/u.exec(part.name ?? '');
+    if (!match) return;
+    const value = parseInt(match[1], 10);
+    if (!Number.isNaN(value) && value > maxExistingIndex) {
+      maxExistingIndex = value;
+    }
+  });
+
+  if (templateCounter <= maxExistingIndex) {
+    templateCounter = maxExistingIndex + 1;
+  }
+
+  let index = templateCounter;
+  let name = '';
+  const existing = new Set(
+    partLibrary
+      .filter((part) => part.category === 'Templates')
+      .map((part) => part.name)
+  );
+
+  while (!name || existing.has(name)) {
+    name = `Template ${index}`;
+    index += 1;
+  }
+
+  templateCounter = index;
+  return name;
+}
+
+function createTemplateFromSelection() {
+  if (selectedMeshes.size < 2) {
+    return false;
+  }
+
+  const geometries = [];
+
+  selectedMeshes.forEach((mesh) => {
+    if (!mesh?.isMesh || !mesh.geometry) return;
+    mesh.updateMatrixWorld(true);
+
+    const clone = mesh.geometry.clone();
+    clone.applyMatrix4(mesh.matrixWorld);
+
+    if (clone.index) {
+      const nonIndexed = clone.toNonIndexed();
+      clone.dispose();
+      geometries.push(nonIndexed);
+    } else {
+      geometries.push(clone);
+    }
+  });
+
+  if (!geometries.length) {
+    console.warn('Template creation aborted: selection contained no mergeable meshes.');
+    alert('Unable to create a template from the current selection.');
+    return false;
+  }
+
+  let merged = mergeGeometries(geometries, true);
+
+  geometries.forEach((geom) => geom.dispose());
+
+  if (!merged) {
+    console.warn('Template creation failed: mergeGeometries returned null.');
+    alert('Unable to create a template from the current selection.');
+    return false;
+  }
+
+  merged.computeBoundingBox();
+  if (merged.boundingBox) {
+    merged.boundingBox.getCenter(templateTempCenter);
+    merged.translate(-templateTempCenter.x, -templateTempCenter.y, -templateTempCenter.z);
+    merged.computeBoundingBox();
+  }
+
+  merged.computeBoundingSphere();
+  if (!merged.attributes.normal) {
+    merged.computeVertexNormals();
+  }
+  fixNormalsForGeometry(merged);
+
+  const templateName = getNextTemplateName();
+
+  partLibrary.push({
+    name: templateName,
+    geometry: merged,
+    category: 'Templates'
+  });
+
+  updatePartsListUI();
+  return true;
 }
 
 function disposeClipboardSelection() {
@@ -3265,6 +3540,17 @@ if (measureModeBtn) {
 
 window.addEventListener('keydown', (e) => {
   const tag = e.target.tagName;
+
+  if (
+    selectionContextMenu &&
+    selectionContextMenu.style.display === 'block' &&
+    (e.key === 'Escape' || e.key === 'Esc')
+  ) {
+    e.preventDefault();
+    hideSelectionContextMenu();
+    return;
+  }
+
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
 
   if (e.ctrlKey || e.metaKey) {

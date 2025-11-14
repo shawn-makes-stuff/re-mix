@@ -311,6 +311,46 @@
 
   <!-- Main view -->
   <div id="viewer"></div>
+  <div
+    id="selectionContextMenu"
+    class="context-menu"
+    role="menu"
+    aria-hidden="true"
+  >
+    <button
+      type="button"
+      id="contextCreateTemplate"
+      class="context-menu-item"
+      role="menuitem"
+    >
+      Create template
+    </button>
+    <div class="context-menu-separator" role="presentation"></div>
+    <button
+      type="button"
+      id="contextCopySelection"
+      class="context-menu-item"
+      role="menuitem"
+    >
+      Copy
+    </button>
+    <button
+      type="button"
+      id="contextPasteSelection"
+      class="context-menu-item"
+      role="menuitem"
+    >
+      Paste
+    </button>
+    <button
+      type="button"
+      id="contextDeleteSelection"
+      class="context-menu-item"
+      role="menuitem"
+    >
+      Delete
+    </button>
+  </div>
   <input
     type="file"
     id="fileInput"
