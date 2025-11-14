@@ -24,6 +24,10 @@ const gridSnapBtn = document.getElementById('gridSnapBtn');
 const gridSnapIcon = gridSnapBtn
   ? gridSnapBtn.querySelector('.material-symbols-outlined')
   : null;
+const stackingModeBtn = document.getElementById('stackingModeBtn');
+const stackingModeIcon = stackingModeBtn
+  ? stackingModeBtn.querySelector('.material-symbols-outlined')
+  : null;
 
 const rotateLeftBtn = document.getElementById('rotateLeftBtn');
 const rotateRightBtn = document.getElementById('rotateRightBtn');
@@ -112,6 +116,8 @@ let currentGridDivisions = BASE_GRID_DIVISIONS;
 let currentGridWorldSize = GRID_WORLD_SIZE;
 let gridSnapEnabled = false;
 let advancedGridSnapEnabled = false;
+let stackingModeEnabled = false;
+let advancedStackingModeEnabled = false;
 let gridCellSize = DEFAULT_GRID_CELL_SIZE;
 let translationSnapValue = DEFAULT_GRID_CELL_SIZE;
 let lastValidTranslationSnap = DEFAULT_GRID_CELL_SIZE;
@@ -158,6 +164,8 @@ const flipTempMatrix = new THREE.Matrix4();
 const flipTempMatrix2 = new THREE.Matrix4();
 const flipTempMatrix3 = new THREE.Matrix4();
 const flipTempMatrix4 = new THREE.Matrix4();
+const stackingNewBounds = new THREE.Box3();
+const stackingExistingBounds = new THREE.Box3();
 const flipTempPosition = new THREE.Vector3();
 const flipTempQuaternion = new THREE.Quaternion();
 const flipTempScale = new THREE.Vector3();
@@ -983,6 +991,8 @@ function updateBottomControlsVisibility() {
     gridControls.style.display = isAdvancedMode ? 'flex' : 'none';
   }
 
+  updateStackingModeButton();
+
   if (rotateLeftBtn) rotateLeftBtn.disabled = !hasSelection;
   if (rotateRightBtn) rotateRightBtn.disabled = !hasSelection;
 
@@ -1306,6 +1316,105 @@ function applyGridSnapToSelection() {
   selectionTransformAnchor.position.x += deltaX;
   selectionTransformAnchor.position.z += deltaZ;
   selectionTransformAnchor.updateMatrixWorld(true);
+}
+
+function computeStackedYForGeometry(geometry, x, z) {
+  if (!stackingModeEnabled || !geometry) return null;
+
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox();
+  }
+
+  const bounds = geometry.boundingBox;
+  if (!bounds) return null;
+
+  stackingNewBounds.copy(bounds);
+  const min = stackingNewBounds.min;
+  const max = stackingNewBounds.max;
+
+  const newMinX = min.x + x;
+  const newMaxX = max.x + x;
+  const newMinZ = min.z + z;
+  const newMaxZ = max.z + z;
+
+  let highestY = 0;
+  let foundOverlap = false;
+
+  placedPartsGroup.children.forEach((child) => {
+    if (!child.isMesh || !child.geometry || child.userData.partIndex == null) return;
+
+    stackingExistingBounds.setFromObject(child);
+    if (
+      stackingExistingBounds.max.x < newMinX ||
+      stackingExistingBounds.min.x > newMaxX ||
+      stackingExistingBounds.max.z < newMinZ ||
+      stackingExistingBounds.min.z > newMaxZ
+    ) {
+      return;
+    }
+
+    highestY = Math.max(highestY, stackingExistingBounds.max.y);
+    foundOverlap = true;
+  });
+
+  if (!foundOverlap) {
+    highestY = Math.max(highestY, 0);
+  }
+
+  return highestY - min.y;
+}
+
+function getDropPlaneHeight(x, z) {
+  const normal = dropPlane.normal;
+  const denom = normal.y;
+  if (Math.abs(denom) < 1e-6) {
+    return -dropPlane.constant;
+  }
+  return -(normal.x * x + normal.z * z + dropPlane.constant) / denom;
+}
+
+function updateStackingModeButton() {
+  if (!stackingModeBtn) return;
+
+  const isActiveInMode = isAdvancedMode && stackingModeEnabled;
+  stackingModeBtn.classList.toggle('active', isActiveInMode);
+  stackingModeBtn.setAttribute('aria-pressed', isActiveInMode ? 'true' : 'false');
+  stackingModeBtn.disabled = !isAdvancedMode;
+
+  if (stackingModeIcon) {
+    stackingModeIcon.textContent = 'brick';
+  }
+
+  stackingModeBtn.title = isAdvancedMode
+    ? (stackingModeEnabled ? 'Stacking mode: On' : 'Stacking mode: Off')
+    : (advancedStackingModeEnabled
+      ? 'Stacking mode will be ON in Advanced mode'
+      : 'Stacking mode will be OFF in Advanced mode');
+}
+
+function setStackingModeEnabled(enabled) {
+  if (!isAdvancedMode) {
+    advancedStackingModeEnabled = enabled;
+    stackingModeEnabled = false;
+    updateStackingModeButton();
+    return;
+  }
+
+  stackingModeEnabled = enabled;
+  advancedStackingModeEnabled = enabled;
+  updateStackingModeButton();
+
+  if (dragPreviewMesh && hasPendingDropPosition) {
+    const { x, z } = pendingDropPosition;
+    let y = getDropPlaneHeight(x, z);
+    const stackedY = computeStackedYForGeometry(dragPreviewMesh.geometry, x, z);
+    if (stackedY != null) {
+      y = stackedY;
+    }
+    dragPreviewMesh.position.set(x, y, z);
+    pendingDropPosition.set(x, y, z);
+    dragPreviewMesh.visible = true;
+  }
 }
 
 function updateGridSnapButton() {
@@ -1655,6 +1764,7 @@ function extractPartsFromObject(root) {
 
     const geom = child.geometry.clone();
     geom.applyMatrix4(child.matrixWorld);
+    geom.computeBoundingBox();
     if (!geom.attributes.normal) geom.computeVertexNormals();
     fixNormalsForGeometry(geom);  // 🔧 ensure outward
 
@@ -1957,6 +2067,7 @@ function beginPartDragPreview(partIndex) {
   endPartDragPreview();
 
   const geomClone = part.geometry.clone();
+  geomClone.computeBoundingBox();
   dragPreviewMesh = new THREE.Mesh(geomClone, dragPreviewMaterial);
   dragPreviewMesh.visible = false;
   dragPreviewMesh.renderOrder = 2;
@@ -2005,9 +2116,15 @@ function updateDragPreviewFromEvent(event) {
     z = snapToStep(z, step);
   }
 
-  dragPreviewMesh.position.set(x, intersection.y, z);
+  let y = intersection.y;
+  const stackedY = computeStackedYForGeometry(dragPreviewMesh.geometry, x, z);
+  if (stackedY != null) {
+    y = stackedY;
+  }
+
+  dragPreviewMesh.position.set(x, y, z);
   dragPreviewMesh.visible = true;
-  pendingDropPosition.set(x, intersection.y, z);
+  pendingDropPosition.set(x, y, z);
   hasPendingDropPosition = true;
 }
 
@@ -2068,6 +2185,7 @@ function addPartInstance(partIndex, initialPosition = null) {
   const isFirst = placedPartsGroup.children.length === 0;
 
   const geomClone = part.geometry.clone();
+  geomClone.computeBoundingBox();
   const mesh = new THREE.Mesh(geomClone, normalMaterial);
   if (initialPosition) {
     mesh.position.copy(initialPosition);
@@ -2079,6 +2197,11 @@ function addPartInstance(partIndex, initialPosition = null) {
 
   if (gridSnapEnabled) {
     applyGridSnap(mesh);
+  }
+
+  const stackedY = computeStackedYForGeometry(geomClone, mesh.position.x, mesh.position.z);
+  if (stackedY != null) {
+    mesh.position.y = stackedY;
   }
 
   mesh.userData = {
@@ -2494,6 +2617,15 @@ if (gridSnapBtn) {
   });
 }
 
+if (stackingModeBtn) {
+  stackingModeBtn.addEventListener('click', () => {
+    if (!isAdvancedMode) return;
+    setStackingModeEnabled(!stackingModeEnabled);
+  });
+}
+
+updateStackingModeButton();
+
 function deleteSelected() {
   if (selectedMeshes.size === 0) return;
 
@@ -2622,15 +2754,19 @@ function setAdvancedMode(on) {
   advancedPanel.style.display = on ? 'block' : 'none';
   if (on) {
     setGridSnapEnabled(advancedGridSnapEnabled);
+    setStackingModeEnabled(advancedStackingModeEnabled);
     setTransformMode('translate');
   } else {
     setMeasureMode(false);
     if (wasAdvanced) {
       advancedGridSnapEnabled = gridSnapEnabled;
+      advancedStackingModeEnabled = stackingModeEnabled;
     }
     gridSnapEnabled = false;
+    stackingModeEnabled = false;
     refreshTransformSnapping();
     updateGridSnapButton();
+    updateStackingModeButton();
     transformControls.detach();
     resetSelectionTransformState();
     endPartDragPreview();
