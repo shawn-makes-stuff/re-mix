@@ -90,6 +90,7 @@ export function createDomRefs() {
   const selectionContextMenu = document.getElementById('selectionContextMenu');
   const contextCreateTemplateBtn = document.getElementById('contextCreateTemplate');
   const contextCopySelectionBtn = document.getElementById('contextCopySelection');
+  const contextPasteSelectionBtn = document.getElementById('contextPasteSelection');
   const contextDeleteSelectionBtn = document.getElementById('contextDeleteSelection');
 
   return {
@@ -151,6 +152,7 @@ export function createDomRefs() {
     selectionContextMenu,
     contextCreateTemplateBtn,
     contextCopySelectionBtn,
+    contextPasteSelectionBtn,
     contextDeleteSelectionBtn
   };
 }

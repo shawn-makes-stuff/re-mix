@@ -79,6 +79,7 @@ const {
   selectionContextMenu,
   contextCreateTemplateBtn,
   contextCopySelectionBtn,
+  contextPasteSelectionBtn,
   contextDeleteSelectionBtn
 } = createDomRefs();
 
@@ -2705,6 +2706,8 @@ function onCanvasPointerUp(event) {
   if (intersects.length > 0) {
     const mesh = intersects[0].object;
     handleMeshClick(mesh, event.shiftKey);
+  } else if (selectedMeshes.size > 0) {
+    clearSelection();
   }
 }
 
@@ -2723,11 +2726,6 @@ function onCanvasPointerMove(event) {
 
 function onCanvasContextMenu(event) {
   if (!selectionContextMenu) return;
-  if (selectedMeshes.size === 0) {
-    hideSelectionContextMenu();
-    return;
-  }
-
   event.preventDefault();
   showSelectionContextMenu(event.clientX, event.clientY);
 }
@@ -2765,6 +2763,14 @@ if (contextCopySelectionBtn) {
   contextCopySelectionBtn.addEventListener('click', () => {
     if (contextCopySelectionBtn.disabled) return;
     copySelectionToClipboard();
+    hideSelectionContextMenu();
+  });
+}
+
+if (contextPasteSelectionBtn) {
+  contextPasteSelectionBtn.addEventListener('click', () => {
+    if (contextPasteSelectionBtn.disabled) return;
+    pasteClipboardSelection();
     hideSelectionContextMenu();
   });
 }
@@ -2915,6 +2921,11 @@ function updateSelectionContextMenuState() {
   if (contextCopySelectionBtn) {
     contextCopySelectionBtn.disabled = !hasSelection;
   }
+  if (contextPasteSelectionBtn) {
+    const hasClipboardItems =
+      !!clipboardSelection && clipboardSelection.items.length > 0;
+    contextPasteSelectionBtn.disabled = !hasClipboardItems;
+  }
   if (contextDeleteSelectionBtn) {
     contextDeleteSelectionBtn.disabled = !hasSelection;
   }
@@ -2963,6 +2974,7 @@ function showSelectionContextMenu(x, y) {
   const firstEnabledButton = [
     contextCreateTemplateBtn,
     contextCopySelectionBtn,
+    contextPasteSelectionBtn,
     contextDeleteSelectionBtn
   ].find((btn) => btn && !btn.disabled);
   firstEnabledButton?.focus();
