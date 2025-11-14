@@ -24,6 +24,10 @@ const gridSnapBtn = document.getElementById('gridSnapBtn');
 const gridSnapIcon = gridSnapBtn
   ? gridSnapBtn.querySelector('.material-symbols-outlined')
   : null;
+const stackingModeBtn = document.getElementById('stackingModeBtn');
+const stackingModeIcon = stackingModeBtn
+  ? stackingModeBtn.querySelector('.material-symbols-outlined')
+  : null;
 
 const rotateLeftBtn = document.getElementById('rotateLeftBtn');
 const rotateRightBtn = document.getElementById('rotateRightBtn');
@@ -112,6 +116,8 @@ let currentGridDivisions = BASE_GRID_DIVISIONS;
 let currentGridWorldSize = GRID_WORLD_SIZE;
 let gridSnapEnabled = false;
 let advancedGridSnapEnabled = false;
+let stackingModeEnabled = false;
+let advancedStackingModeEnabled = false;
 let gridCellSize = DEFAULT_GRID_CELL_SIZE;
 let translationSnapValue = DEFAULT_GRID_CELL_SIZE;
 let lastValidTranslationSnap = DEFAULT_GRID_CELL_SIZE;
@@ -158,6 +164,42 @@ const flipTempMatrix = new THREE.Matrix4();
 const flipTempMatrix2 = new THREE.Matrix4();
 const flipTempMatrix3 = new THREE.Matrix4();
 const flipTempMatrix4 = new THREE.Matrix4();
+const stackingIdentityQuaternion = new THREE.Quaternion();
+const stackingIdentityScale = new THREE.Vector3(1, 1, 1);
+const stackingNewMatrix = new THREE.Matrix4();
+const stackingNewPosition = new THREE.Vector3();
+const stackingNewBottomCorners = [
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3()
+];
+const stackingExistingBottomCorners = [
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3()
+];
+const stackingSampleWorldPoint = new THREE.Vector3();
+const stackingNewBottomCenter = new THREE.Vector3();
+const stackingExistingFootprint = [
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2()
+];
+const stackingNewFootprint = [
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2()
+];
+const stackingExistingFootprintBounds = new THREE.Box2();
+const stackingNewFootprintBounds = new THREE.Box2();
+const stackingTempBox = new THREE.Box3();
+const stackingSatAxis = new THREE.Vector2();
+const STACKING_CONTACT_EPSILON = 0.01;
+const STACKING_SAT_EPSILON = 1e-6;
 const flipTempPosition = new THREE.Vector3();
 const flipTempQuaternion = new THREE.Quaternion();
 const flipTempScale = new THREE.Vector3();
@@ -983,6 +1025,8 @@ function updateBottomControlsVisibility() {
     gridControls.style.display = isAdvancedMode ? 'flex' : 'none';
   }
 
+  updateStackingModeButton();
+
   if (rotateLeftBtn) rotateLeftBtn.disabled = !hasSelection;
   if (rotateRightBtn) rotateRightBtn.disabled = !hasSelection;
 
@@ -1306,6 +1350,234 @@ function applyGridSnapToSelection() {
   selectionTransformAnchor.position.x += deltaX;
   selectionTransformAnchor.position.z += deltaZ;
   selectionTransformAnchor.updateMatrixWorld(true);
+}
+
+function populateStackingBottomCorners(bounds, target) {
+  const min = bounds.min;
+  const max = bounds.max;
+  target[0].set(min.x, min.y, min.z);
+  target[1].set(max.x, min.y, min.z);
+  target[2].set(max.x, min.y, max.z);
+  target[3].set(min.x, min.y, max.z);
+}
+
+function fillStackingFootprint(bounds, matrix, cornerTargets, footprintTargets, boxTarget) {
+  populateStackingBottomCorners(bounds, cornerTargets);
+  boxTarget.makeEmpty();
+  for (let i = 0; i < cornerTargets.length; i++) {
+    cornerTargets[i].applyMatrix4(matrix);
+    footprintTargets[i].set(cornerTargets[i].x, cornerTargets[i].z);
+    boxTarget.expandByPoint(footprintTargets[i]);
+  }
+}
+
+function projectPolygonOntoAxis(points, axis, result) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < points.length; i++) {
+    const projection = axis.x * points[i].x + axis.y * points[i].y;
+    if (projection < min) min = projection;
+    if (projection > max) max = projection;
+  }
+  result.min = min;
+  result.max = max;
+}
+
+function polygonsOverlap2D(polyA, polyB) {
+  const axisResultA = { min: 0, max: 0 };
+  const axisResultB = { min: 0, max: 0 };
+
+  const testAxes = (points, other) => {
+    for (let i = 0; i < points.length; i++) {
+      const current = points[i];
+      const next = points[(i + 1) % points.length];
+      stackingSatAxis.set(-(next.y - current.y), next.x - current.x);
+      const lenSq = stackingSatAxis.lengthSq();
+      if (lenSq < STACKING_SAT_EPSILON) {
+        continue;
+      }
+      stackingSatAxis.multiplyScalar(1 / Math.sqrt(lenSq));
+      projectPolygonOntoAxis(points, stackingSatAxis, axisResultA);
+      projectPolygonOntoAxis(other, stackingSatAxis, axisResultB);
+      if (
+        axisResultA.max < axisResultB.min - STACKING_SAT_EPSILON ||
+        axisResultB.max < axisResultA.min - STACKING_SAT_EPSILON
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  return testAxes(polyA, polyB) && testAxes(polyB, polyA);
+}
+
+function computeStackingSupportHeight(worldPoint, footprint, footprintBounds) {
+  const planeY = getDropPlaneHeight(worldPoint.x, worldPoint.z);
+  let supportY = planeY;
+  let fromMesh = false;
+
+  const children = placedPartsGroup.children;
+  for (let i = 0; i < children.length; i++) {
+    const mesh = children[i];
+    if (!mesh.visible) continue;
+
+    const geometry = mesh.geometry;
+    if (!geometry?.isBufferGeometry) continue;
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
+    }
+    const bounds = geometry.boundingBox;
+    if (!bounds) continue;
+
+    mesh.updateMatrixWorld(true);
+
+    fillStackingFootprint(
+      bounds,
+      mesh.matrixWorld,
+      stackingExistingBottomCorners,
+      stackingExistingFootprint,
+      stackingExistingFootprintBounds
+    );
+
+    if (!footprintBounds.intersectsBox(stackingExistingFootprintBounds)) {
+      continue;
+    }
+
+    if (!polygonsOverlap2D(footprint, stackingExistingFootprint)) {
+      continue;
+    }
+
+    stackingTempBox.copy(bounds).applyMatrix4(mesh.matrixWorld);
+    const topY = stackingTempBox.max.y;
+    if (topY > supportY) {
+      supportY = topY;
+      fromMesh = true;
+    }
+  }
+
+  return { height: supportY, fromMesh };
+}
+
+function computeStackedYForGeometry(geometry, x, z, quaternion = null, scale = null) {
+  if (!stackingModeEnabled || !geometry) return null;
+
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox();
+  }
+
+  const bounds = geometry.boundingBox;
+  if (!bounds) return null;
+
+  const quat = quaternion || stackingIdentityQuaternion;
+  const scl = scale || stackingIdentityScale;
+
+  stackingNewPosition.set(x, 0, z);
+  stackingNewMatrix.compose(stackingNewPosition, quat, scl);
+
+  fillStackingFootprint(
+    bounds,
+    stackingNewMatrix,
+    stackingNewBottomCorners,
+    stackingNewFootprint,
+    stackingNewFootprintBounds
+  );
+
+  stackingNewBottomCenter.set(0, 0, 0);
+  for (let i = 0; i < stackingNewBottomCorners.length; i++) {
+    stackingNewBottomCenter.add(stackingNewBottomCorners[i]);
+  }
+  stackingNewBottomCenter.multiplyScalar(1 / stackingNewBottomCorners.length);
+
+  let requiredShift = 0;
+
+  for (let i = 0; i < stackingNewBottomCorners.length; i++) {
+    stackingSampleWorldPoint.copy(stackingNewBottomCorners[i]);
+    const support = computeStackingSupportHeight(
+      stackingSampleWorldPoint,
+      stackingNewFootprint,
+      stackingNewFootprintBounds
+    );
+    const contactEpsilon = support.fromMesh ? STACKING_CONTACT_EPSILON : 0;
+    const delta =
+      support.height + contactEpsilon - stackingSampleWorldPoint.y;
+    if (delta > requiredShift) {
+      requiredShift = delta;
+    }
+  }
+
+  const centerSupport = computeStackingSupportHeight(
+    stackingNewBottomCenter,
+    stackingNewFootprint,
+    stackingNewFootprintBounds
+  );
+  const centerEpsilon = centerSupport.fromMesh ? STACKING_CONTACT_EPSILON : 0;
+  const centerDelta =
+    centerSupport.height + centerEpsilon - stackingNewBottomCenter.y;
+  if (centerDelta > requiredShift) {
+    requiredShift = centerDelta;
+  }
+
+  return requiredShift;
+}
+
+function getDropPlaneHeight(x, z) {
+  const normal = dropPlane.normal;
+  const denom = normal.y;
+  if (Math.abs(denom) < 1e-6) {
+    return -dropPlane.constant;
+  }
+  return -(normal.x * x + normal.z * z + dropPlane.constant) / denom;
+}
+
+function updateStackingModeButton() {
+  if (!stackingModeBtn) return;
+
+  const isActiveInMode = isAdvancedMode && stackingModeEnabled;
+  stackingModeBtn.classList.toggle('active', isActiveInMode);
+  stackingModeBtn.setAttribute('aria-pressed', isActiveInMode ? 'true' : 'false');
+  stackingModeBtn.disabled = !isAdvancedMode;
+
+  if (stackingModeIcon) {
+    stackingModeIcon.textContent = 'brick';
+  }
+
+  stackingModeBtn.title = isAdvancedMode
+    ? (stackingModeEnabled ? 'Stacking mode: On' : 'Stacking mode: Off')
+    : (advancedStackingModeEnabled
+      ? 'Stacking mode will be ON in Advanced mode'
+      : 'Stacking mode will be OFF in Advanced mode');
+}
+
+function setStackingModeEnabled(enabled) {
+  if (!isAdvancedMode) {
+    advancedStackingModeEnabled = enabled;
+    stackingModeEnabled = false;
+    updateStackingModeButton();
+    return;
+  }
+
+  stackingModeEnabled = enabled;
+  advancedStackingModeEnabled = enabled;
+  updateStackingModeButton();
+
+  if (dragPreviewMesh && hasPendingDropPosition) {
+    const { x, z } = pendingDropPosition;
+    let y = getDropPlaneHeight(x, z);
+    const stackedY = computeStackedYForGeometry(
+      dragPreviewMesh.geometry,
+      x,
+      z,
+      dragPreviewMesh.quaternion,
+      dragPreviewMesh.scale
+    );
+    if (stackedY != null) {
+      y = stackedY;
+    }
+    dragPreviewMesh.position.set(x, y, z);
+    pendingDropPosition.set(x, y, z);
+    dragPreviewMesh.visible = true;
+  }
 }
 
 function updateGridSnapButton() {
@@ -1655,6 +1927,7 @@ function extractPartsFromObject(root) {
 
     const geom = child.geometry.clone();
     geom.applyMatrix4(child.matrixWorld);
+    geom.computeBoundingBox();
     if (!geom.attributes.normal) geom.computeVertexNormals();
     fixNormalsForGeometry(geom);  // 🔧 ensure outward
 
@@ -1957,6 +2230,7 @@ function beginPartDragPreview(partIndex) {
   endPartDragPreview();
 
   const geomClone = part.geometry.clone();
+  geomClone.computeBoundingBox();
   dragPreviewMesh = new THREE.Mesh(geomClone, dragPreviewMaterial);
   dragPreviewMesh.visible = false;
   dragPreviewMesh.renderOrder = 2;
@@ -2005,9 +2279,21 @@ function updateDragPreviewFromEvent(event) {
     z = snapToStep(z, step);
   }
 
-  dragPreviewMesh.position.set(x, intersection.y, z);
+  let y = intersection.y;
+  const stackedY = computeStackedYForGeometry(
+    dragPreviewMesh.geometry,
+    x,
+    z,
+    dragPreviewMesh.quaternion,
+    dragPreviewMesh.scale
+  );
+  if (stackedY != null) {
+    y = stackedY;
+  }
+
+  dragPreviewMesh.position.set(x, y, z);
   dragPreviewMesh.visible = true;
-  pendingDropPosition.set(x, intersection.y, z);
+  pendingDropPosition.set(x, y, z);
   hasPendingDropPosition = true;
 }
 
@@ -2068,6 +2354,7 @@ function addPartInstance(partIndex, initialPosition = null) {
   const isFirst = placedPartsGroup.children.length === 0;
 
   const geomClone = part.geometry.clone();
+  geomClone.computeBoundingBox();
   const mesh = new THREE.Mesh(geomClone, normalMaterial);
   if (initialPosition) {
     mesh.position.copy(initialPosition);
@@ -2079,6 +2366,17 @@ function addPartInstance(partIndex, initialPosition = null) {
 
   if (gridSnapEnabled) {
     applyGridSnap(mesh);
+  }
+
+  const stackedY = computeStackedYForGeometry(
+    geomClone,
+    mesh.position.x,
+    mesh.position.z,
+    mesh.quaternion,
+    mesh.scale
+  );
+  if (stackedY != null) {
+    mesh.position.y = stackedY;
   }
 
   mesh.userData = {
@@ -2494,6 +2792,15 @@ if (gridSnapBtn) {
   });
 }
 
+if (stackingModeBtn) {
+  stackingModeBtn.addEventListener('click', () => {
+    if (!isAdvancedMode) return;
+    setStackingModeEnabled(!stackingModeEnabled);
+  });
+}
+
+updateStackingModeButton();
+
 function deleteSelected() {
   if (selectedMeshes.size === 0) return;
 
@@ -2622,15 +2929,19 @@ function setAdvancedMode(on) {
   advancedPanel.style.display = on ? 'block' : 'none';
   if (on) {
     setGridSnapEnabled(advancedGridSnapEnabled);
+    setStackingModeEnabled(advancedStackingModeEnabled);
     setTransformMode('translate');
   } else {
     setMeasureMode(false);
     if (wasAdvanced) {
       advancedGridSnapEnabled = gridSnapEnabled;
+      advancedStackingModeEnabled = stackingModeEnabled;
     }
     gridSnapEnabled = false;
+    stackingModeEnabled = false;
     refreshTransformSnapping();
     updateGridSnapButton();
+    updateStackingModeButton();
     transformControls.detach();
     resetSelectionTransformState();
     endPartDragPreview();
