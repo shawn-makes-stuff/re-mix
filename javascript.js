@@ -307,22 +307,27 @@ axisRenderer.setClearColor(0x000000, 0);
 
 const axisMount = document.getElementById('axisWidgetMount');
 const axisOverlayElement = axisMount ?? axisRenderer.domElement;
-const axisDragSurface = axisOverlayElement;
+const axisDragSurface = axisRenderer.domElement;
 
 if (axisMount) {
   axisMount.style.width = `${AXIS_WIDGET_SIZE}px`;
   axisMount.style.height = `${AXIS_WIDGET_SIZE}px`;
   axisMount.appendChild(axisRenderer.domElement);
-  axisRenderer.domElement.classList.add('axis-widget-canvas');
+  axisMount.style.pointerEvents = 'none';
 } else {
   axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
   axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
-  axisRenderer.domElement.classList.add('axis-widget');
+  axisRenderer.domElement.style.position = 'absolute';
+  axisRenderer.domElement.style.top = '16px';
+  axisRenderer.domElement.style.right = '16px';
+  axisRenderer.domElement.style.zIndex = '6';
   container.appendChild(axisRenderer.domElement);
 }
 
-axisOverlayElement.style.pointerEvents = 'auto';
-axisOverlayElement.style.touchAction = 'none';
+axisRenderer.domElement.classList.add('axis-widget-canvas');
+axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
+axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
+
 axisRenderer.domElement.style.pointerEvents = 'auto';
 axisRenderer.domElement.style.touchAction = 'none';
 
@@ -339,6 +344,7 @@ function updateAxisWidgetPlacement() {
 
   const style = axisOverlayElement.style;
   const baseOffset = 16;
+  style.top = `${baseOffset}px`;
   if (window.innerWidth > 820 && isSidebarVisiblyOpen()) {
     style.right = `${sidebar.offsetWidth + baseOffset}px`;
   } else {
@@ -505,7 +511,7 @@ axisRenderer.domElement.addEventListener('pointermove', (event) => {
   const deltaX = event.clientX - axisLastPointer.x;
   const deltaY = event.clientY - axisLastPointer.y;
   axisLastPointer = { x: event.clientX, y: event.clientY };
-  const rotateSpeed = 0.005;
+  const rotateSpeed = 0.01;
   controls.rotateLeft(deltaX * rotateSpeed);
   controls.rotateUp(deltaY * rotateSpeed);
   controls.update();

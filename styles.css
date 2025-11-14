@@ -31,37 +31,30 @@ body {
   height: 100vh;
 }
 
-.axis-widget {
+.axis-widget-mount {
   position: absolute;
   top: 16px;
   right: 16px;
   width: 110px;
   height: 110px;
-  border-radius: 14px;
-  background: rgba(12, 12, 12, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(10px);
-  pointer-events: auto;
-  touch-action: none;
-  cursor: grab;
-  user-select: none;
+  pointer-events: none;
   z-index: 6;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.axis-widget.dragging {
-  cursor: grabbing;
-}
-
-.axis-widget canvas,
 .axis-widget-canvas {
   width: 100%;
   height: 100%;
   display: block;
-  border-radius: inherit;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  background: transparent;
+  user-select: none;
+  border-radius: 50%;
+}
+
+.axis-widget-canvas.dragging {
+  cursor: grabbing;
 }
 
 /* Google icons base */
