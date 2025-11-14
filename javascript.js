@@ -718,8 +718,8 @@ const selectedMaterial = new THREE.MeshStandardMaterial({
 });
 
 scene.add(placedPartsGroup);
+refreshGridGeometry();
 updateGridExtents();
-applyUrlConfiguration();
 
 /* -------------------------------------------------------------------------- */
 /* MEASUREMENT TOOL                                                            */
@@ -3468,8 +3468,10 @@ function frameScene() {
     hasContent = true;
   }
 
-  box.expandByObject(floor);
-  hasContent = true;
+  if (floor) {
+    box.expandByObject(floor);
+    hasContent = true;
+  }
 
   if (!hasContent) return;
 
@@ -3813,4 +3815,6 @@ setAdvancedMode(false); // start in basic mode
 resetHistory();
 pushHistory();
 updateHistoryButtons();
-loadDefaultLogoPart();
+loadDefaultLogoPart().finally(() => {
+  applyUrlConfiguration();
+});
