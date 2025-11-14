@@ -3,7 +3,7 @@ import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/cont
 import { FBXLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/FBXLoader.js';
 import { STLLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/STLLoader.js';
 import { TransformControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/TransformControls.js';
-import { mergeBufferGeometries } from './src/vendor/three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries } from 'https://unpkg.com/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   DEFAULT_GRID_CELL_SIZE,
   BASE_GRID_DIVISIONS,
@@ -3030,12 +3030,12 @@ function createTemplateFromSelection() {
     return false;
   }
 
-  let merged = mergeBufferGeometries(geometries, true);
+  let merged = mergeGeometries(geometries, true);
 
   geometries.forEach((geom) => geom.dispose());
 
   if (!merged) {
-    console.warn('Template creation failed: mergeBufferGeometries returned null.');
+    console.warn('Template creation failed: mergeGeometries returned null.');
     alert('Unable to create a template from the current selection.');
     return false;
   }
