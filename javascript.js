@@ -65,7 +65,8 @@ const flipYBtn = document.getElementById('flipYBtn');
 const flipZBtn = document.getElementById('flipZBtn');
 
 const snapCellSizeInput = document.getElementById('snapCellSizeInput');
-const snapTranslateInput = document.getElementById('snapTranslateInput');
+const snapTranslateHorizontalInput = document.getElementById('snapTranslateHorizontalInput');
+const snapTranslateVerticalInput = document.getElementById('snapTranslateVerticalInput');
 const snapRotateInput = document.getElementById('snapRotateInput');
 
 const selectModeBtn = document.getElementById('selectModeBtn');
@@ -119,15 +120,21 @@ let advancedGridSnapEnabled = false;
 let stackingModeEnabled = false;
 let advancedStackingModeEnabled = false;
 let gridCellSize = DEFAULT_GRID_CELL_SIZE;
-let translationSnapValue = DEFAULT_GRID_CELL_SIZE;
-let lastValidTranslationSnap = DEFAULT_GRID_CELL_SIZE;
+let translationSnapHorizontal = DEFAULT_GRID_CELL_SIZE;
+let translationSnapVertical = DEFAULT_GRID_CELL_SIZE;
+let lastValidTranslationSnapHorizontal = DEFAULT_GRID_CELL_SIZE;
+let lastValidTranslationSnapVertical = DEFAULT_GRID_CELL_SIZE;
 
 if (snapCellSizeInput) {
   snapCellSizeInput.value = gridCellSize.toString();
 }
 
-if (snapTranslateInput) {
-  snapTranslateInput.value = translationSnapValue.toString();
+if (snapTranslateHorizontalInput) {
+  snapTranslateHorizontalInput.value = translationSnapHorizontal.toString();
+}
+
+if (snapTranslateVerticalInput) {
+  snapTranslateVerticalInput.value = translationSnapVertical.toString();
 }
 
 if (snapCellSizeInput) {
@@ -235,6 +242,9 @@ let hasPendingDropPosition = false;
 let dragPreviewMesh = null;
 let dragPreviewPartIndex = null;
 
+let floor = null;
+let gridHelper = null;
+
 /* -------------------------------------------------------------------------- */
 /* SIDEBAR & HELP                                                              */
 /* -------------------------------------------------------------------------- */
@@ -329,10 +339,111 @@ transformControls.addEventListener('dragging-changed', (e) => {
 });
 
 transformControls.addEventListener('objectChange', () => {
+  if (gridSnapEnabled && transformControls.getMode() === 'translate') {
+    const axis = transformControls.axis || '';
+    const position = selectionTransformAnchor.position;
+    const horizontalStep = getHorizontalSnapStep();
+    if (axis === '' || axis.includes('X') || axis === 'XYZ') {
+      position.x = snapToStep(position.x, horizontalStep);
+    }
+    if (axis === '' || axis.includes('Z') || axis === 'XYZ') {
+      position.z = snapToStep(position.z, horizontalStep);
+    }
+    if (selectedMeshes.size <= 1 || axis === '' || axis.includes('Y')) {
+      const verticalStep = getVerticalSnapStep();
+      position.y = snapToStep(position.y, verticalStep);
+    }
+  }
+
   applySelectionTransform();
   if (isAdvancedMode) syncAdvancedPanelFromSelection();
   updateGridExtents();
 });
+
+function parseBooleanParam(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return null;
+}
+
+function applyUrlConfiguration() {
+  if (typeof window === 'undefined' || !window.location) {
+    return;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.size === 0) return;
+
+  let shouldRefreshSnapping = false;
+
+  const advancedModeParam = parseBooleanParam(params.get('advanced_mode'));
+  if (advancedModeParam != null) {
+    setAdvancedMode(advancedModeParam);
+  }
+
+  const cellSizeParam = params.get('cell_size');
+  if (cellSizeParam != null) {
+    const parsed = parseFloat(cellSizeParam);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      updateGridCellSize(parsed);
+      shouldRefreshSnapping = true;
+    }
+  }
+
+  const snapHorizontalParam = params.get('snapping_horizontal');
+  if (snapHorizontalParam != null) {
+    const parsed = parseFloat(snapHorizontalParam);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      translationSnapHorizontal = parsed;
+      lastValidTranslationSnapHorizontal = parsed;
+      if (snapTranslateHorizontalInput) {
+        snapTranslateHorizontalInput.value = parsed.toString();
+      }
+      shouldRefreshSnapping = true;
+    }
+  }
+
+  const snapVerticalParam = params.get('snapping_vertical');
+  if (snapVerticalParam != null) {
+    const parsed = parseFloat(snapVerticalParam);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      translationSnapVertical = parsed;
+      lastValidTranslationSnapVertical = parsed;
+      if (snapTranslateVerticalInput) {
+        snapTranslateVerticalInput.value = parsed.toString();
+      }
+      shouldRefreshSnapping = true;
+    }
+  }
+
+  const gridSnapParam = parseBooleanParam(params.get('grid_snapping'));
+  if (gridSnapParam != null) {
+    advancedGridSnapEnabled = gridSnapParam;
+    if (isAdvancedMode) {
+      setGridSnapEnabled(gridSnapParam);
+    } else {
+      gridSnapEnabled = false;
+      updateGridSnapButton();
+    }
+  }
+
+  const stackingParam = parseBooleanParam(params.get('stacking'));
+  if (stackingParam != null) {
+    advancedStackingModeEnabled = stackingParam;
+    if (isAdvancedMode) {
+      setStackingModeEnabled(stackingParam);
+    } else {
+      stackingModeEnabled = false;
+      updateStackingModeButton();
+    }
+  }
+
+  if (shouldRefreshSnapping) {
+    updateTransformSnapping();
+  }
+}
 
 // Lights
 const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
@@ -357,16 +468,6 @@ const floorMaterial = new THREE.MeshStandardMaterial({
   opacity: 0.08,
   depthWrite: false
 });
-let floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(currentGridWorldSize, currentGridWorldSize),
-  floorMaterial
-);
-floor.rotation.x = -Math.PI / 2;
-floor.position.y = 0;
-scene.add(floor);
-
-let gridHelper = createGridHelper(currentGridWorldSize, currentGridDivisions);
-scene.add(gridHelper);
 
 function createGridHelper(worldSize, divisions) {
   const helper = new THREE.GridHelper(worldSize, divisions, 0x444444, 0x242424);
@@ -396,11 +497,21 @@ function disposeGridHelper(helper) {
 function refreshGridGeometry() {
   currentGridWorldSize = currentGridDivisions * gridCellSize;
 
-  floor.geometry?.dispose?.();
-  floor.geometry = new THREE.PlaneGeometry(
-    currentGridWorldSize,
-    currentGridWorldSize
-  );
+  if (!floor) {
+    floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(currentGridWorldSize, currentGridWorldSize),
+      floorMaterial
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0;
+    scene.add(floor);
+  } else {
+    floor.geometry?.dispose?.();
+    floor.geometry = new THREE.PlaneGeometry(
+      currentGridWorldSize,
+      currentGridWorldSize
+    );
+  }
 
   if (gridHelper) {
     gridHelper.parent?.remove(gridHelper);
@@ -562,16 +673,28 @@ function updateGridCellSize(size) {
     snapCellSizeInput.value = size.toString();
   }
 
-  if (snapTranslateInput) {
-    const moveValue = parseFloat(snapTranslateInput.value);
+  if (snapTranslateHorizontalInput) {
+    const moveValue = parseFloat(snapTranslateHorizontalInput.value);
     if (Number.isNaN(moveValue) || Math.abs(moveValue - prevSize) < 1e-6) {
-      translationSnapValue = size;
-      lastValidTranslationSnap = size;
-      snapTranslateInput.value = size.toString();
+      translationSnapHorizontal = size;
+      lastValidTranslationSnapHorizontal = size;
+      snapTranslateHorizontalInput.value = size.toString();
     }
   } else {
-    translationSnapValue = size;
-    lastValidTranslationSnap = size;
+    translationSnapHorizontal = size;
+    lastValidTranslationSnapHorizontal = size;
+  }
+
+  if (snapTranslateVerticalInput) {
+    const moveValue = parseFloat(snapTranslateVerticalInput.value);
+    if (Number.isNaN(moveValue) || Math.abs(moveValue - prevSize) < 1e-6) {
+      translationSnapVertical = size;
+      lastValidTranslationSnapVertical = size;
+      snapTranslateVerticalInput.value = size.toString();
+    }
+  } else {
+    translationSnapVertical = size;
+    lastValidTranslationSnapVertical = size;
   }
 
   updateTransformSnapping();
@@ -600,6 +723,7 @@ const selectedMaterial = new THREE.MeshStandardMaterial({
 });
 
 scene.add(placedPartsGroup);
+refreshGridGeometry();
 updateGridExtents();
 
 /* -------------------------------------------------------------------------- */
@@ -1301,19 +1425,27 @@ function applySelectionTransform() {
   );
 }
 
-function getTranslationSnapStep() {
-  return translationSnapValue || gridCellSize;
+function getHorizontalSnapStep() {
+  return translationSnapHorizontal || gridCellSize;
+}
+
+function getVerticalSnapStep() {
+  return translationSnapVertical || gridCellSize;
 }
 
 function snapToStep(value, step) {
   return Math.round(value / step) * step;
 }
 
-function applyGridSnap(mesh) {
+function applyGridSnap(mesh, { allowVertical = true } = {}) {
   if (!mesh) return;
-  const step = getTranslationSnapStep();
-  mesh.position.x = snapToStep(mesh.position.x, step);
-  mesh.position.z = snapToStep(mesh.position.z, step);
+  const horizontalStep = getHorizontalSnapStep();
+  mesh.position.x = snapToStep(mesh.position.x, horizontalStep);
+  mesh.position.z = snapToStep(mesh.position.z, horizontalStep);
+  if (allowVertical) {
+    const verticalStep = getVerticalSnapStep();
+    mesh.position.y = snapToStep(mesh.position.y, verticalStep);
+  }
 }
 
 function applyGridSnapToSelection() {
@@ -1329,7 +1461,7 @@ function applyGridSnapToSelection() {
   updateSelectionTransformAnchor({ resetOrientation: false });
   selectionTransformAnchor.updateMatrixWorld(true);
 
-  const step = getTranslationSnapStep();
+  const step = getHorizontalSnapStep();
   const anchorPosition = selectionTransformAnchor.position;
   const targetX = snapToStep(anchorPosition.x, step);
   const targetZ = snapToStep(anchorPosition.z, step);
@@ -1615,17 +1747,22 @@ function updateGridSnapButton() {
       : (advancedGridSnapEnabled ? 'grid_on' : 'grid_off');
     gridSnapIcon.textContent = iconState;
   }
-  const snapStep = getTranslationSnapStep();
-  const display = Number.isInteger(snapStep) ? snapStep.toString() : snapStep.toFixed(1);
+  const formatStep = (value) =>
+    Number.isInteger(value) ? value.toString() : value.toFixed(1);
+  const horizontalDisplay = formatStep(getHorizontalSnapStep());
+  const verticalDisplay = formatStep(getVerticalSnapStep());
+  const summary = `H: ${horizontalDisplay} mm, V: ${verticalDisplay} mm`;
   gridSnapBtn.title = isAdvancedMode
-    ? (gridSnapEnabled ? `Grid snapping: On (${display} mm)` : 'Grid snapping: Off')
+    ? (gridSnapEnabled
+      ? `Grid snapping: On (${summary})`
+      : 'Grid snapping: Off')
     : (advancedGridSnapEnabled
-      ? 'Grid snapping will be ON in Advanced mode'
+      ? `Grid snapping will be ON in Advanced mode (${summary})`
       : 'Grid snapping will be OFF in Advanced mode');
 }
 
 function refreshTransformSnapping() {
-  transformControls.setTranslationSnap(gridSnapEnabled ? getTranslationSnapStep() : null);
+  transformControls.setTranslationSnap(null);
 
   const r = snapRotateInput ? parseFloat(snapRotateInput.value) : NaN;
   transformControls.setRotationSnap(
@@ -1644,8 +1781,13 @@ function setGridSnapEnabled(enabled, { snapSelection = false, commit = false } =
 
   advancedGridSnapEnabled = enabled;
   gridSnapEnabled = enabled;
-  if (snapTranslateInput && enabled) {
-    snapTranslateInput.value = translationSnapValue.toString();
+  if (enabled) {
+    if (snapTranslateHorizontalInput) {
+      snapTranslateHorizontalInput.value = translationSnapHorizontal.toString();
+    }
+    if (snapTranslateVerticalInput) {
+      snapTranslateVerticalInput.value = translationSnapVertical.toString();
+    }
   }
   refreshTransformSnapping();
   updateGridSnapButton();
@@ -2297,7 +2439,7 @@ function updateDragPreviewFromEvent(event) {
   let x = intersection.x;
   let z = intersection.z;
   if (gridSnapEnabled) {
-    const step = getTranslationSnapStep();
+    const step = getHorizontalSnapStep();
     x = snapToStep(x, step);
     z = snapToStep(z, step);
   }
@@ -3161,13 +3303,26 @@ flipButtons.forEach(({ btn, axis }) => {
 });
 
 function updateTransformSnapping() {
-  const t = snapTranslateInput ? parseFloat(snapTranslateInput.value) : NaN;
-  if (!Number.isNaN(t) && t > 0) {
-    translationSnapValue = t;
-    lastValidTranslationSnap = t;
-  } else if (snapTranslateInput) {
-    translationSnapValue = lastValidTranslationSnap;
-    snapTranslateInput.value = lastValidTranslationSnap.toString();
+  const horizontal = snapTranslateHorizontalInput
+    ? parseFloat(snapTranslateHorizontalInput.value)
+    : NaN;
+  if (!Number.isNaN(horizontal) && horizontal > 0) {
+    translationSnapHorizontal = horizontal;
+    lastValidTranslationSnapHorizontal = horizontal;
+  } else if (snapTranslateHorizontalInput) {
+    translationSnapHorizontal = lastValidTranslationSnapHorizontal;
+    snapTranslateHorizontalInput.value = lastValidTranslationSnapHorizontal.toString();
+  }
+
+  const vertical = snapTranslateVerticalInput
+    ? parseFloat(snapTranslateVerticalInput.value)
+    : NaN;
+  if (!Number.isNaN(vertical) && vertical > 0) {
+    translationSnapVertical = vertical;
+    lastValidTranslationSnapVertical = vertical;
+  } else if (snapTranslateVerticalInput) {
+    translationSnapVertical = lastValidTranslationSnapVertical;
+    snapTranslateVerticalInput.value = lastValidTranslationSnapVertical.toString();
   }
 
   refreshTransformSnapping();
@@ -3179,7 +3334,14 @@ function updateTransformSnapping() {
   );
 }
 
-snapTranslateInput.addEventListener('change', updateTransformSnapping);
+if (snapTranslateHorizontalInput) {
+  snapTranslateHorizontalInput.addEventListener('change', updateTransformSnapping);
+}
+
+if (snapTranslateVerticalInput) {
+  snapTranslateVerticalInput.addEventListener('change', updateTransformSnapping);
+}
+
 snapRotateInput.addEventListener('change', updateTransformSnapping);
 
 function setTransformMode(mode, { fromMeasure = false } = {}) {
@@ -3311,8 +3473,10 @@ function frameScene() {
     hasContent = true;
   }
 
-  box.expandByObject(floor);
-  hasContent = true;
+  if (floor) {
+    box.expandByObject(floor);
+    hasContent = true;
+  }
 
   if (!hasContent) return;
 
@@ -3656,4 +3820,6 @@ setAdvancedMode(false); // start in basic mode
 resetHistory();
 pushHistory();
 updateHistoryButtons();
-loadDefaultLogoPart();
+loadDefaultLogoPart().finally(() => {
+  applyUrlConfiguration();
+});
