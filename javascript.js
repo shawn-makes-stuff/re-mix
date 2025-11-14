@@ -242,6 +242,9 @@ let hasPendingDropPosition = false;
 let dragPreviewMesh = null;
 let dragPreviewPartIndex = null;
 
+let floor = null;
+let gridHelper = null;
+
 /* -------------------------------------------------------------------------- */
 /* SIDEBAR & HELP                                                              */
 /* -------------------------------------------------------------------------- */
@@ -346,10 +349,7 @@ transformControls.addEventListener('objectChange', () => {
     if (axis === '' || axis.includes('Z') || axis === 'XYZ') {
       position.z = snapToStep(position.z, horizontalStep);
     }
-    if (
-      !stackingModeEnabled &&
-      (selectedMeshes.size <= 1 || axis === '' || axis.includes('Y'))
-    ) {
+    if (selectedMeshes.size <= 1 || axis === '' || axis.includes('Y')) {
       const verticalStep = getVerticalSnapStep();
       position.y = snapToStep(position.y, verticalStep);
     }
@@ -368,7 +368,7 @@ function parseBooleanParam(value) {
   return null;
 }
 
-(function applyUrlConfiguration() {
+function applyUrlConfiguration() {
   if (typeof window === 'undefined' || !window.location) {
     return;
   }
@@ -438,7 +438,7 @@ function parseBooleanParam(value) {
   if (shouldRefreshSnapping) {
     updateTransformSnapping();
   }
-})();
+}
 
 // Lights
 const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
@@ -463,16 +463,6 @@ const floorMaterial = new THREE.MeshStandardMaterial({
   opacity: 0.08,
   depthWrite: false
 });
-let floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(currentGridWorldSize, currentGridWorldSize),
-  floorMaterial
-);
-floor.rotation.x = -Math.PI / 2;
-floor.position.y = 0;
-scene.add(floor);
-
-let gridHelper = createGridHelper(currentGridWorldSize, currentGridDivisions);
-scene.add(gridHelper);
 
 function createGridHelper(worldSize, divisions) {
   const helper = new THREE.GridHelper(worldSize, divisions, 0x444444, 0x242424);
@@ -502,11 +492,21 @@ function disposeGridHelper(helper) {
 function refreshGridGeometry() {
   currentGridWorldSize = currentGridDivisions * gridCellSize;
 
-  floor.geometry?.dispose?.();
-  floor.geometry = new THREE.PlaneGeometry(
-    currentGridWorldSize,
-    currentGridWorldSize
-  );
+  if (!floor) {
+    floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(currentGridWorldSize, currentGridWorldSize),
+      floorMaterial
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0;
+    scene.add(floor);
+  } else {
+    floor.geometry?.dispose?.();
+    floor.geometry = new THREE.PlaneGeometry(
+      currentGridWorldSize,
+      currentGridWorldSize
+    );
+  }
 
   if (gridHelper) {
     gridHelper.parent?.remove(gridHelper);
@@ -719,6 +719,7 @@ const selectedMaterial = new THREE.MeshStandardMaterial({
 
 scene.add(placedPartsGroup);
 updateGridExtents();
+applyUrlConfiguration();
 
 /* -------------------------------------------------------------------------- */
 /* MEASUREMENT TOOL                                                            */
@@ -1436,7 +1437,7 @@ function applyGridSnap(mesh, { allowVertical = true } = {}) {
   const horizontalStep = getHorizontalSnapStep();
   mesh.position.x = snapToStep(mesh.position.x, horizontalStep);
   mesh.position.z = snapToStep(mesh.position.z, horizontalStep);
-  if (allowVertical && !stackingModeEnabled) {
+  if (allowVertical) {
     const verticalStep = getVerticalSnapStep();
     mesh.position.y = snapToStep(mesh.position.y, verticalStep);
   }
