@@ -87,6 +87,11 @@ export function createDomRefs() {
 
   const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 
+  const selectionContextMenu = document.getElementById('selectionContextMenu');
+  const contextCreateTemplateBtn = document.getElementById('contextCreateTemplate');
+  const contextCopySelectionBtn = document.getElementById('contextCopySelection');
+  const contextDeleteSelectionBtn = document.getElementById('contextDeleteSelection');
+
   return {
     container,
     sidebar,
@@ -142,6 +147,10 @@ export function createDomRefs() {
     measureModeBtn,
     measurementReadout,
     flipButtons,
-    sidebarResizeHandle
+    sidebarResizeHandle,
+    selectionContextMenu,
+    contextCreateTemplateBtn,
+    contextCopySelectionBtn,
+    contextDeleteSelectionBtn
   };
 }
