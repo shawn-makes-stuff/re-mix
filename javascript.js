@@ -1171,6 +1171,29 @@ function clearSelection() {
   syncAdvancedPanelFromSelection();
 }
 
+function selectAllMeshes() {
+  const meshes = placedPartsGroup.children.filter((child) => child.isMesh);
+
+  if (meshes.length === 0) {
+    if (selectedMeshes.size > 0) {
+      clearSelection();
+    }
+    return;
+  }
+
+  selectedMeshes.forEach((mesh) => setMeshHighlight(mesh, false));
+  selectedMeshes.clear();
+
+  meshes.forEach((mesh) => {
+    selectedMeshes.add(mesh);
+    setMeshHighlight(mesh, true);
+  });
+
+  updateBottomControlsVisibility();
+  updateTransformControls();
+  syncAdvancedPanelFromSelection();
+}
+
 function handleMeshClick(mesh, shiftKey) {
   if (!mesh || !mesh.isMesh) return;
 
@@ -2351,8 +2374,6 @@ function addPartInstance(partIndex, initialPosition = null) {
   const part = partLibrary[partIndex];
   if (!part) return null;
 
-  const isFirst = placedPartsGroup.children.length === 0;
-
   const geomClone = part.geometry.clone();
   geomClone.computeBoundingBox();
   const mesh = new THREE.Mesh(geomClone, normalMaterial);
@@ -2390,10 +2411,6 @@ function addPartInstance(partIndex, initialPosition = null) {
   placedPartsGroup.add(mesh);
   updateGridExtents();
   registerMeshInstance(mesh);
-
-  if (isFirst) {
-    frameScene(false);
-  }
 
   updateSceneObjectsList();
   return mesh;
@@ -3218,6 +3235,11 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'y' || e.key === 'Y') {
       e.preventDefault();
       redo();
+      return;
+    }
+    if (e.key === 'a' || e.key === 'A') {
+      e.preventDefault();
+      selectAllMeshes();
       return;
     }
     if (e.key === 'c' || e.key === 'C') {
