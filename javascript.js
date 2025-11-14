@@ -304,12 +304,27 @@ const axisRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 axisRenderer.setPixelRatio(window.devicePixelRatio);
 axisRenderer.setSize(AXIS_WIDGET_SIZE, AXIS_WIDGET_SIZE);
 axisRenderer.setClearColor(0x000000, 0);
-axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
-axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
-axisRenderer.domElement.classList.add('axis-widget');
+
+const axisMount = document.getElementById('axisWidgetMount');
+const axisOverlayElement = axisMount ?? axisRenderer.domElement;
+const axisDragSurface = axisOverlayElement;
+
+if (axisMount) {
+  axisMount.style.width = `${AXIS_WIDGET_SIZE}px`;
+  axisMount.style.height = `${AXIS_WIDGET_SIZE}px`;
+  axisMount.appendChild(axisRenderer.domElement);
+  axisRenderer.domElement.classList.add('axis-widget-canvas');
+} else {
+  axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
+  axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
+  axisRenderer.domElement.classList.add('axis-widget');
+  container.appendChild(axisRenderer.domElement);
+}
+
+axisOverlayElement.style.pointerEvents = 'auto';
+axisOverlayElement.style.touchAction = 'none';
 axisRenderer.domElement.style.pointerEvents = 'auto';
 axisRenderer.domElement.style.touchAction = 'none';
-container.appendChild(axisRenderer.domElement);
 
 function isSidebarVisiblyOpen() {
   if (window.innerWidth > 820) {
@@ -320,9 +335,9 @@ function isSidebarVisiblyOpen() {
 }
 
 function updateAxisWidgetPlacement() {
-  if (!axisRenderer || !axisRenderer.domElement) return;
+  if (!axisRenderer || !axisRenderer.domElement || !axisOverlayElement) return;
 
-  const style = axisRenderer.domElement.style;
+  const style = axisOverlayElement.style;
   const baseOffset = 16;
   if (window.innerWidth > 820 && isSidebarVisiblyOpen()) {
     style.right = `${sidebar.offsetWidth + baseOffset}px`;
@@ -424,6 +439,13 @@ let axisLastPointer = { x: 0, y: 0 };
 function updateAxisWidgetSize() {
   axisRenderer.setPixelRatio(window.devicePixelRatio);
   axisRenderer.setSize(AXIS_WIDGET_SIZE, AXIS_WIDGET_SIZE);
+  if (axisMount) {
+    axisMount.style.width = `${AXIS_WIDGET_SIZE}px`;
+    axisMount.style.height = `${AXIS_WIDGET_SIZE}px`;
+  } else {
+    axisRenderer.domElement.style.width = `${AXIS_WIDGET_SIZE}px`;
+    axisRenderer.domElement.style.height = `${AXIS_WIDGET_SIZE}px`;
+  }
   updateAxisWidgetPlacement();
 }
 
@@ -473,7 +495,7 @@ axisRenderer.domElement.addEventListener('pointerdown', (event) => {
   axisDragPointerId = event.pointerId;
   axisLastPointer = { x: event.clientX, y: event.clientY };
   axisRenderer.domElement.setPointerCapture(event.pointerId);
-  axisRenderer.domElement.classList.add('dragging');
+  axisDragSurface.classList.add('dragging');
   event.preventDefault();
   event.stopPropagation();
 });
@@ -497,7 +519,7 @@ const endAxisDrag = (event) => {
     return;
   }
   axisDragging = false;
-  axisRenderer.domElement.classList.remove('dragging');
+  axisDragSurface.classList.remove('dragging');
   if (event && event.pointerId != null) {
     axisRenderer.domElement.releasePointerCapture(event.pointerId);
   }
