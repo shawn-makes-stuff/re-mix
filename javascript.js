@@ -167,7 +167,6 @@ const flipTempMatrix4 = new THREE.Matrix4();
 const stackingIdentityQuaternion = new THREE.Quaternion();
 const stackingIdentityScale = new THREE.Vector3(1, 1, 1);
 const stackingNewMatrix = new THREE.Matrix4();
-const stackingNormalMatrix = new THREE.Matrix3();
 const stackingNewPosition = new THREE.Vector3();
 const stackingNewBottomCorners = [
   new THREE.Vector3(),
@@ -175,24 +174,32 @@ const stackingNewBottomCorners = [
   new THREE.Vector3(),
   new THREE.Vector3()
 ];
-const stackingRaycaster = new THREE.Raycaster();
-stackingRaycaster.ray.direction.set(0, -1, 0);
-const stackingRayOrigin = new THREE.Vector3();
+const stackingExistingBottomCorners = [
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3()
+];
 const stackingSampleWorldPoint = new THREE.Vector3();
-const stackingSampleWorldNormal = new THREE.Vector3();
-const stackingTempVecA = new THREE.Vector3();
-const stackingTempVecB = new THREE.Vector3();
-const stackingTempVecC = new THREE.Vector3();
-const stackingTempEdge1 = new THREE.Vector3();
-const stackingTempEdge2 = new THREE.Vector3();
-const stackingTempNormal = new THREE.Vector3();
-const stackingTempCentroid = new THREE.Vector3();
+const stackingNewBottomCenter = new THREE.Vector3();
+const stackingExistingFootprint = [
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2()
+];
+const stackingNewFootprint = [
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2(),
+  new THREE.Vector2()
+];
+const stackingExistingFootprintBounds = new THREE.Box2();
+const stackingNewFootprintBounds = new THREE.Box2();
+const stackingTempBox = new THREE.Box3();
+const stackingSatAxis = new THREE.Vector2();
 const STACKING_CONTACT_EPSILON = 0.01;
-const STACKING_DOWNWARD_NORMAL_THRESHOLD = -0.05;
-const STACKING_VERTEX_QUANTIZATION = 10000;
-const STACKING_FACE_EPSILON = 1e-12;
-const STACKING_RAYCAST_ASCENT = 10000;
-const STACKING_SAMPLE_CACHE_KEY = 'stackingSampleData';
+const STACKING_SAT_EPSILON = 1e-6;
 const flipTempPosition = new THREE.Vector3();
 const flipTempQuaternion = new THREE.Quaternion();
 const flipTempScale = new THREE.Vector3();
@@ -1354,186 +1361,98 @@ function populateStackingBottomCorners(bounds, target) {
   target[3].set(min.x, min.y, max.z);
 }
 
-function getStackingSampleData(geometry) {
-  if (!geometry?.isBufferGeometry) return null;
-
-  geometry.userData = geometry.userData || {};
-
-  const cached = geometry.userData[STACKING_SAMPLE_CACHE_KEY];
-  if (cached) {
-    return cached;
+function fillStackingFootprint(bounds, matrix, cornerTargets, footprintTargets, boxTarget) {
+  populateStackingBottomCorners(bounds, cornerTargets);
+  boxTarget.makeEmpty();
+  for (let i = 0; i < cornerTargets.length; i++) {
+    cornerTargets[i].applyMatrix4(matrix);
+    footprintTargets[i].set(cornerTargets[i].x, cornerTargets[i].z);
+    boxTarget.expandByPoint(footprintTargets[i]);
   }
-
-  const positionAttr = geometry.getAttribute('position');
-  if (!positionAttr) {
-    geometry.userData[STACKING_SAMPLE_CACHE_KEY] = null;
-    return null;
-  }
-
-  const vertexCount = positionAttr.count;
-  const normalAttr = geometry.getAttribute('normal');
-
-  const vertexNormalSums = normalAttr
-    ? null
-    : Array.from({ length: vertexCount }, () => new THREE.Vector3());
-
-  const centroidPositions = [];
-  const centroidNormals = [];
-
-  const pushTriangle = (ia, ib, ic) => {
-    stackingTempVecA.fromBufferAttribute(positionAttr, ia);
-    stackingTempVecB.fromBufferAttribute(positionAttr, ib);
-    stackingTempVecC.fromBufferAttribute(positionAttr, ic);
-
-    stackingTempEdge1.subVectors(stackingTempVecB, stackingTempVecA);
-    stackingTempEdge2.subVectors(stackingTempVecC, stackingTempVecA);
-    stackingTempNormal.crossVectors(stackingTempEdge1, stackingTempEdge2);
-
-    if (stackingTempNormal.lengthSq() < STACKING_FACE_EPSILON) {
-      return;
-    }
-
-    stackingTempNormal.normalize();
-
-    stackingTempCentroid
-      .copy(stackingTempVecA)
-      .add(stackingTempVecB)
-      .add(stackingTempVecC)
-      .multiplyScalar(1 / 3);
-
-    centroidPositions.push(
-      stackingTempCentroid.x,
-      stackingTempCentroid.y,
-      stackingTempCentroid.z
-    );
-    centroidNormals.push(
-      stackingTempNormal.x,
-      stackingTempNormal.y,
-      stackingTempNormal.z
-    );
-
-    if (vertexNormalSums) {
-      vertexNormalSums[ia].add(stackingTempNormal);
-      vertexNormalSums[ib].add(stackingTempNormal);
-      vertexNormalSums[ic].add(stackingTempNormal);
-    }
-  };
-
-  if (geometry.index) {
-    const indexAttr = geometry.index;
-    for (let i = 0; i < indexAttr.count; i += 3) {
-      pushTriangle(
-        indexAttr.getX(i),
-        indexAttr.getX(i + 1),
-        indexAttr.getX(i + 2)
-      );
-    }
-  } else {
-    for (let i = 0; i < vertexCount; i += 3) {
-      pushTriangle(i, i + 1, i + 2);
-    }
-  }
-
-  const vertexMap = new Map();
-  const vertexPositions = [];
-  const vertexNormals = [];
-
-  const quant = STACKING_VERTEX_QUANTIZATION;
-
-  for (let i = 0; i < vertexCount; i++) {
-    stackingTempVecA.fromBufferAttribute(positionAttr, i);
-
-    if (normalAttr) {
-      stackingTempNormal.fromBufferAttribute(normalAttr, i);
-    } else if (vertexNormalSums) {
-      stackingTempNormal.copy(vertexNormalSums[i]);
-    } else {
-      stackingTempNormal.set(0, -1, 0);
-    }
-
-    if (stackingTempNormal.lengthSq() < STACKING_FACE_EPSILON) {
-      stackingTempNormal.set(0, -1, 0);
-    } else {
-      stackingTempNormal.normalize();
-    }
-
-    const key = `${Math.round(stackingTempVecA.x * quant)}|${Math.round(
-      stackingTempVecA.y * quant
-    )}|${Math.round(stackingTempVecA.z * quant)}`;
-
-    let entry = vertexMap.get(key);
-    if (!entry) {
-      entry = {
-        position: stackingTempVecA.clone(),
-        normal: stackingTempNormal.clone(),
-        count: 1
-      };
-      vertexMap.set(key, entry);
-    } else {
-      entry.normal.add(stackingTempNormal);
-      entry.count++;
-    }
-  }
-
-  vertexMap.forEach((entry) => {
-    if (entry.normal.lengthSq() < STACKING_FACE_EPSILON) {
-      entry.normal.set(0, -1, 0);
-    } else {
-      entry.normal.multiplyScalar(1 / entry.count).normalize();
-    }
-
-    vertexPositions.push(
-      entry.position.x,
-      entry.position.y,
-      entry.position.z
-    );
-    vertexNormals.push(entry.normal.x, entry.normal.y, entry.normal.z);
-  });
-
-  const totalSamples = vertexPositions.length + centroidPositions.length;
-  if (totalSamples === 0) {
-    geometry.userData[STACKING_SAMPLE_CACHE_KEY] = null;
-    return null;
-  }
-
-  const positionsArray = new Float32Array(totalSamples);
-  positionsArray.set(vertexPositions, 0);
-  positionsArray.set(centroidPositions, vertexPositions.length);
-
-  const normalsArray = new Float32Array(vertexNormals.length + centroidNormals.length);
-  normalsArray.set(vertexNormals, 0);
-  normalsArray.set(centroidNormals, vertexNormals.length);
-
-  const sampleData = {
-    positions: positionsArray,
-    normals: normalsArray
-  };
-
-  geometry.userData[STACKING_SAMPLE_CACHE_KEY] = sampleData;
-  return sampleData;
 }
 
-function computeStackingSupportHeight(worldPoint) {
+function projectPolygonOntoAxis(points, axis, result) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < points.length; i++) {
+    const projection = axis.x * points[i].x + axis.y * points[i].y;
+    if (projection < min) min = projection;
+    if (projection > max) max = projection;
+  }
+  result.min = min;
+  result.max = max;
+}
+
+function polygonsOverlap2D(polyA, polyB) {
+  const axisResultA = { min: 0, max: 0 };
+  const axisResultB = { min: 0, max: 0 };
+
+  const testAxes = (points, other) => {
+    for (let i = 0; i < points.length; i++) {
+      const current = points[i];
+      const next = points[(i + 1) % points.length];
+      stackingSatAxis.set(-(next.y - current.y), next.x - current.x);
+      const lenSq = stackingSatAxis.lengthSq();
+      if (lenSq < STACKING_SAT_EPSILON) {
+        continue;
+      }
+      stackingSatAxis.multiplyScalar(1 / Math.sqrt(lenSq));
+      projectPolygonOntoAxis(points, stackingSatAxis, axisResultA);
+      projectPolygonOntoAxis(other, stackingSatAxis, axisResultB);
+      if (
+        axisResultA.max < axisResultB.min - STACKING_SAT_EPSILON ||
+        axisResultB.max < axisResultA.min - STACKING_SAT_EPSILON
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  return testAxes(polyA, polyB) && testAxes(polyB, polyA);
+}
+
+function computeStackingSupportHeight(worldPoint, footprint, footprintBounds) {
   const planeY = getDropPlaneHeight(worldPoint.x, worldPoint.z);
   let supportY = planeY;
   let fromMesh = false;
 
-  if (placedPartsGroup.children.length > 0) {
-    stackingRayOrigin.copy(worldPoint);
-    stackingRayOrigin.y += STACKING_RAYCAST_ASCENT;
-    stackingRaycaster.ray.origin.copy(stackingRayOrigin);
+  const children = placedPartsGroup.children;
+  for (let i = 0; i < children.length; i++) {
+    const mesh = children[i];
+    if (!mesh.visible) continue;
 
-    const hits = stackingRaycaster.intersectObjects(
-      placedPartsGroup.children,
-      true
+    const geometry = mesh.geometry;
+    if (!geometry?.isBufferGeometry) continue;
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
+    }
+    const bounds = geometry.boundingBox;
+    if (!bounds) continue;
+
+    mesh.updateMatrixWorld(true);
+
+    fillStackingFootprint(
+      bounds,
+      mesh.matrixWorld,
+      stackingExistingBottomCorners,
+      stackingExistingFootprint,
+      stackingExistingFootprintBounds
     );
 
-    if (hits.length > 0) {
-      const meshY = hits[0].point.y;
-      if (meshY > supportY) {
-        supportY = meshY;
-        fromMesh = true;
-      }
+    if (!footprintBounds.intersectsBox(stackingExistingFootprintBounds)) {
+      continue;
+    }
+
+    if (!polygonsOverlap2D(footprint, stackingExistingFootprint)) {
+      continue;
+    }
+
+    stackingTempBox.copy(bounds).applyMatrix4(mesh.matrixWorld);
+    const topY = stackingTempBox.max.y;
+    if (topY > supportY) {
+      supportY = topY;
+      fromMesh = true;
     }
   }
 
@@ -1555,61 +1474,48 @@ function computeStackedYForGeometry(geometry, x, z, quaternion = null, scale = n
 
   stackingNewPosition.set(x, 0, z);
   stackingNewMatrix.compose(stackingNewPosition, quat, scl);
-  stackingNormalMatrix.getNormalMatrix(stackingNewMatrix);
 
-  const samples = getStackingSampleData(geometry);
+  fillStackingFootprint(
+    bounds,
+    stackingNewMatrix,
+    stackingNewBottomCorners,
+    stackingNewFootprint,
+    stackingNewFootprintBounds
+  );
+
+  stackingNewBottomCenter.set(0, 0, 0);
+  for (let i = 0; i < stackingNewBottomCorners.length; i++) {
+    stackingNewBottomCenter.add(stackingNewBottomCorners[i]);
+  }
+  stackingNewBottomCenter.multiplyScalar(1 / stackingNewBottomCorners.length);
+
   let requiredShift = 0;
-  let usedSamples = false;
 
-  if (samples) {
-    const { positions, normals } = samples;
-    for (let i = 0; i < positions.length; i += 3) {
-      stackingSampleWorldPoint.set(
-        positions[i],
-        positions[i + 1],
-        positions[i + 2]
-      );
-      stackingSampleWorldPoint.applyMatrix4(stackingNewMatrix);
-
-      stackingSampleWorldNormal.set(
-        normals[i],
-        normals[i + 1],
-        normals[i + 2]
-      );
-      stackingSampleWorldNormal
-        .applyMatrix3(stackingNormalMatrix)
-        .normalize();
-
-      if (stackingSampleWorldNormal.y >= STACKING_DOWNWARD_NORMAL_THRESHOLD) {
-        continue;
-      }
-
-      usedSamples = true;
-
-      const support = computeStackingSupportHeight(stackingSampleWorldPoint);
-      const contactEpsilon = support.fromMesh ? STACKING_CONTACT_EPSILON : 0;
-      const delta =
-        support.height + contactEpsilon - stackingSampleWorldPoint.y;
-      if (delta > requiredShift) {
-        requiredShift = delta;
-      }
+  for (let i = 0; i < stackingNewBottomCorners.length; i++) {
+    stackingSampleWorldPoint.copy(stackingNewBottomCorners[i]);
+    const support = computeStackingSupportHeight(
+      stackingSampleWorldPoint,
+      stackingNewFootprint,
+      stackingNewFootprintBounds
+    );
+    const contactEpsilon = support.fromMesh ? STACKING_CONTACT_EPSILON : 0;
+    const delta =
+      support.height + contactEpsilon - stackingSampleWorldPoint.y;
+    if (delta > requiredShift) {
+      requiredShift = delta;
     }
   }
 
-  if (!usedSamples) {
-    populateStackingBottomCorners(bounds, stackingNewBottomCorners);
-    for (let i = 0; i < stackingNewBottomCorners.length; i++) {
-      stackingSampleWorldPoint.copy(stackingNewBottomCorners[i]);
-      stackingSampleWorldPoint.applyMatrix4(stackingNewMatrix);
-
-      const support = computeStackingSupportHeight(stackingSampleWorldPoint);
-      const contactEpsilon = support.fromMesh ? STACKING_CONTACT_EPSILON : 0;
-      const delta =
-        support.height + contactEpsilon - stackingSampleWorldPoint.y;
-      if (delta > requiredShift) {
-        requiredShift = delta;
-      }
-    }
+  const centerSupport = computeStackingSupportHeight(
+    stackingNewBottomCenter,
+    stackingNewFootprint,
+    stackingNewFootprintBounds
+  );
+  const centerEpsilon = centerSupport.fromMesh ? STACKING_CONTACT_EPSILON : 0;
+  const centerDelta =
+    centerSupport.height + centerEpsilon - stackingNewBottomCenter.y;
+  if (centerDelta > requiredShift) {
+    requiredShift = centerDelta;
   }
 
   return requiredShift;
