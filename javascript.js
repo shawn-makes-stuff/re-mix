@@ -151,6 +151,8 @@ const multiSelectionTempMatrix4 = new THREE.Matrix4();
 const multiSelectionTempPosition = new THREE.Vector3();
 const multiSelectionTempQuaternion = new THREE.Quaternion();
 const multiSelectionTempScale = new THREE.Vector3();
+const worldYAxis = new THREE.Vector3(0, 1, 0);
+const worldRotationTempQuaternion = new THREE.Quaternion();
 
 const flipTempMatrix = new THREE.Matrix4();
 const flipTempMatrix2 = new THREE.Matrix4();
@@ -160,7 +162,7 @@ const flipTempPosition = new THREE.Vector3();
 const flipTempQuaternion = new THREE.Quaternion();
 const flipTempScale = new THREE.Vector3();
 
-let multiSelectionTransformState = null;
+let selectionTransformState = null;
 
 let history = [];
 let historyIndex = -1;
@@ -266,26 +268,26 @@ transformControls.addEventListener('dragging-changed', (e) => {
   if (e.value) {
     isTransforming = true;
     hadTransformDrag = true;   // gizmo drag actually started
-    captureMultiSelectionTransformState();
+    captureSelectionTransformState();
   } else {
     if (isTransforming) {
       if (gridSnapEnabled) {
         applyGridSnapToSelection();
       }
-      if (selectedMeshes.size > 1) {
-        updateSelectionTransformAnchor({ resetOrientation: false });
+      if (selectedMeshes.size > 0) {
+        updateSelectionTransformAnchor();
       }
       syncAdvancedPanelFromSelection();
       updateSceneObjectsList();
       pushHistory();           // commit final transform once per drag
     }
     isTransforming = false;
-    resetMultiSelectionTransformState();
+    resetSelectionTransformState();
   }
 });
 
 transformControls.addEventListener('objectChange', () => {
-  applyMultiSelectionTransform();
+  applySelectionTransform();
   if (isAdvancedMode) syncAdvancedPanelFromSelection();
   updateGridExtents();
 });
@@ -1099,7 +1101,7 @@ function updateSelectionTransformAnchor({ resetOrientation = true } = {}) {
 }
 
 function updateTransformControls() {
-  resetMultiSelectionTransformState();
+  resetSelectionTransformState();
   if (
     !isAdvancedMode ||
     selectedMeshes.size === 0 ||
@@ -1109,24 +1111,17 @@ function updateTransformControls() {
     return;
   }
 
-  if (selectedMeshes.size === 1) {
-    const mesh = [...selectedMeshes][0];
-    centerMeshPivot(mesh);
-    transformControls.attach(mesh);
-    refreshTransformSnapping();
-    return;
-  }
-
   selectedMeshes.forEach(centerMeshPivot);
   updateSelectionTransformAnchor();
   transformControls.attach(selectionTransformAnchor);
+  transformControls.setSpace('world');
   refreshTransformSnapping();
 }
 
 function clearSelection() {
   selectedMeshes.forEach((mesh) => setMeshHighlight(mesh, false));
   selectedMeshes.clear();
-  resetMultiSelectionTransformState();
+  resetSelectionTransformState();
   updateBottomControlsVisibility();
   updateTransformControls();
   syncAdvancedPanelFromSelection();
@@ -1161,13 +1156,13 @@ function handleMeshClick(mesh, shiftKey) {
   syncAdvancedPanelFromSelection();
 }
 
-function resetMultiSelectionTransformState() {
-  multiSelectionTransformState = null;
+function resetSelectionTransformState() {
+  selectionTransformState = null;
 }
 
-function captureMultiSelectionTransformState() {
-  if (selectedMeshes.size <= 1) {
-    resetMultiSelectionTransformState();
+function captureSelectionTransformState() {
+  if (selectedMeshes.size === 0) {
+    resetSelectionTransformState();
     return;
   }
 
@@ -1191,19 +1186,19 @@ function captureMultiSelectionTransformState() {
   });
 
   if (meshData.length === 0) {
-    resetMultiSelectionTransformState();
+    resetSelectionTransformState();
     return;
   }
 
-  multiSelectionTransformState = {
+  selectionTransformState = {
     anchorStartMatrixWorld,
     anchorStartMatrixWorldInverse,
     meshData
   };
 }
 
-function applyMultiSelectionTransform() {
-  if (!multiSelectionTransformState || selectedMeshes.size <= 1) return;
+function applySelectionTransform() {
+  if (!selectionTransformState) return;
 
   selectionTransformAnchor.updateMatrixWorld(true);
 
@@ -1212,9 +1207,9 @@ function applyMultiSelectionTransform() {
   );
   const deltaMatrixWorld = multiSelectionTempMatrix2
     .copy(currentAnchorMatrixWorld)
-    .multiply(multiSelectionTransformState.anchorStartMatrixWorldInverse);
+    .multiply(selectionTransformState.anchorStartMatrixWorldInverse);
 
-  multiSelectionTransformState.meshData.forEach(
+  selectionTransformState.meshData.forEach(
     ({ mesh, initialMatrixWorld, parentMatrixWorldInverse }) => {
       if (!mesh?.isObject3D || !mesh.parent) return;
 
@@ -2405,17 +2400,11 @@ function rotateSelectedPart(deltaSteps) {
   }
 
   const angle = deltaSteps * (Math.PI / 2);
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
+  worldRotationTempQuaternion.setFromAxisAngle(worldYAxis, angle);
 
   selectedMeshes.forEach((mesh) => {
-    const p = mesh.position;
-    const x = p.x;
-    const z = p.z;
-
-    p.x = x * cos - z * sin;
-    p.z = x * sin + z * cos;
-    mesh.rotation.y += angle;
+    mesh.position.applyQuaternion(worldRotationTempQuaternion);
+    mesh.quaternion.premultiply(worldRotationTempQuaternion);
 
     const steps = (mesh.userData.rotationSteps ?? 0) + deltaSteps;
     mesh.userData.rotationSteps = ((steps % 4) + 4) % 4;
@@ -2423,9 +2412,16 @@ function rotateSelectedPart(deltaSteps) {
     if (gridSnapEnabled) {
       applyGridSnap(mesh);
     }
+
+    mesh.updateMatrix();
+    mesh.updateMatrixWorld(true);
   });
 
   updateGridExtents();
+  if (isAdvancedMode && selectedMeshes.size > 0) {
+    updateTransformControls();
+    syncAdvancedPanelFromSelection();
+  }
   pushHistory();
 }
 
@@ -2556,7 +2552,7 @@ function pasteClipboardSelection() {
 
   selectedMeshes.forEach((mesh) => setMeshHighlight(mesh, false));
   selectedMeshes.clear();
-  resetMultiSelectionTransformState();
+  resetSelectionTransformState();
 
   const newMeshes = [];
   const snapSelection = gridSnapEnabled && clipboardSelection.items.length === 1;
@@ -2636,7 +2632,7 @@ function setAdvancedMode(on) {
     refreshTransformSnapping();
     updateGridSnapButton();
     transformControls.detach();
-    resetMultiSelectionTransformState();
+    resetSelectionTransformState();
     endPartDragPreview();
   }
   updateBottomControlsVisibility();
@@ -2735,6 +2731,13 @@ function applyAdvancedInputs() {
 
   if (gridSnapEnabled) {
     applyGridSnap(mesh);
+  }
+
+  mesh.updateMatrix();
+  mesh.updateMatrixWorld(true);
+
+  if (selectedMeshes.size > 0) {
+    updateSelectionTransformAnchor();
   }
 
   updateGridExtents();
