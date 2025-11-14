@@ -1,0 +1,8 @@
+export const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
+export const BASE_GRID_DIVISIONS = 40;
+export const GRID_MARGIN_CELLS = 2;
+export const STACKING_CONTACT_EPSILON = 0.01;
+export const STACKING_SAT_EPSILON = 1e-6;
+
+export const GRID_WORLD_SIZE = DEFAULT_GRID_CELL_SIZE * BASE_GRID_DIVISIONS;
+export const MIN_GRID_DIVISIONS = BASE_GRID_DIVISIONS;
