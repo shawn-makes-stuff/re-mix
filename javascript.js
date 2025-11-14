@@ -148,6 +148,7 @@ const multiSelectionTempPosition = new THREE.Vector3();
 const multiSelectionTempQuaternion = new THREE.Quaternion();
 const multiSelectionTempScale = new THREE.Vector3();
 const worldYAxis = new THREE.Vector3(0, 1, 0);
+const localRotationAxis = new THREE.Vector3(0, 1, 0);
 const worldRotationTempQuaternion = new THREE.Quaternion();
 const templateTempCenter = new THREE.Vector3();
 
@@ -2888,6 +2889,51 @@ function rotateSelectedPartAroundCenter(deltaSteps) {
   pushHistory();
 }
 
+function getAdvancedRotationStepRadians() {
+  if (!snapRotateInput) {
+    return Math.PI / 2;
+  }
+
+  const snapDegrees = parseFloat(snapRotateInput.value);
+  if (!Number.isNaN(snapDegrees) && snapDegrees > 0) {
+    return THREE.MathUtils.degToRad(snapDegrees);
+  }
+
+  return Math.PI / 2;
+}
+
+function rotateSelectionLocallyAdvanced(direction) {
+  if (!isAdvancedMode || selectedMeshes.size === 0) return;
+
+  const step = getAdvancedRotationStepRadians();
+  const angle = direction * step;
+
+  if (!Number.isFinite(angle) || Math.abs(angle) < 1e-6) {
+    return;
+  }
+
+  selectedMeshes.forEach((mesh) => {
+    if (!mesh?.isObject3D) return;
+
+    centerMeshPivot(mesh);
+    mesh.rotateOnAxis(localRotationAxis, angle);
+    mesh.userData.rotationSteps = 0;
+
+    if (gridSnapEnabled) {
+      applyGridSnap(mesh);
+    }
+
+    mesh.updateMatrix();
+    mesh.updateMatrixWorld(true);
+  });
+
+  updateGridExtents();
+  updateSceneObjectsList();
+  updateTransformControls();
+  syncAdvancedPanelFromSelection();
+  pushHistory();
+}
+
 function updateRotationModeUi() {
   if (!rotationModeBtn) return;
   rotationModeBtn.classList.toggle('active', !rotateAroundWorld);
@@ -3601,13 +3647,17 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (e.key === 'q' || e.key === 'Q') {
-    if (e.shiftKey || (!rotateAroundWorld && selectedMeshes.size === 1)) {
+    if (isAdvancedMode) {
+      rotateSelectionLocallyAdvanced(-1);
+    } else if (e.shiftKey || (!rotateAroundWorld && selectedMeshes.size === 1)) {
       rotateSelectedPartAroundCenter(-1);
     } else {
       rotateSelectedPart(-1);
     }
   } else if (e.key === 'e' || e.key === 'E') {
-    if (e.shiftKey || (!rotateAroundWorld && selectedMeshes.size === 1)) {
+    if (isAdvancedMode) {
+      rotateSelectionLocallyAdvanced(1);
+    } else if (e.shiftKey || (!rotateAroundWorld && selectedMeshes.size === 1)) {
       rotateSelectedPartAroundCenter(1);
     } else {
       rotateSelectedPart(1);
