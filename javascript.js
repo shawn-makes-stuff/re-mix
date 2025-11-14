@@ -3,97 +3,79 @@ import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/cont
 import { FBXLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/FBXLoader.js';
 import { STLLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/STLLoader.js';
 import { TransformControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/TransformControls.js';
+import {
+  DEFAULT_GRID_CELL_SIZE,
+  BASE_GRID_DIVISIONS,
+  GRID_MARGIN_CELLS,
+  STACKING_CONTACT_EPSILON,
+  STACKING_SAT_EPSILON,
+  GRID_WORLD_SIZE,
+  MIN_GRID_DIVISIONS
+} from './src/config.js';
+import { createDomRefs } from './src/dom-elements.js';
+import { fixNormalsForGeometry } from './src/geometry/normals.js';
 
 /* -------------------------------------------------------------------------- */
 /* DOM REFS                                                                    */
 /* -------------------------------------------------------------------------- */
 
-const container = document.getElementById('viewer');
-const sidebar = document.getElementById('sidebar');
-
-const menuButton = document.getElementById('menuButton');
-const undoButton = document.getElementById('undoButton');
-const helpButton = document.getElementById('helpButton');
-const advancedModeButton = document.getElementById('advancedModeButton');
-
-const bottomControls = document.getElementById('bottomControls');
-const basicControls = document.getElementById('basicControls');
-const advancedControls = document.getElementById('advancedControls');
-const gridControls = document.getElementById('gridControls');
-const gridSnapBtn = document.getElementById('gridSnapBtn');
-const gridSnapIcon = gridSnapBtn
-  ? gridSnapBtn.querySelector('.material-symbols-outlined')
-  : null;
-const stackingModeBtn = document.getElementById('stackingModeBtn');
-const stackingModeIcon = stackingModeBtn
-  ? stackingModeBtn.querySelector('.material-symbols-outlined')
-  : null;
-
-const rotateLeftBtn = document.getElementById('rotateLeftBtn');
-const rotateRightBtn = document.getElementById('rotateRightBtn');
-const rotationModeBtn = document.getElementById('rotationModeBtn');
-const rotationModeIcon = document.getElementById('rotationModeIcon');
-
-const helpOverlay = document.getElementById('helpOverlay');
-const helpCloseBtn = document.getElementById('helpCloseBtn');
-
-const fileInput = document.getElementById('fileInput');
-const importBtn = document.getElementById('importBtn');
-const exportStlBtn = document.getElementById('exportStlBtn');
-const fileNameLabel = document.getElementById('fileName');
-const partsList = document.getElementById('partsList');
-
-const scenePanel = document.getElementById('scenePanel');
-const sceneResizeHandle = document.getElementById('sceneResizeHandle');
-const sceneObjectsList = document.getElementById('sceneObjectsList');
-
-const advancedPanel = document.getElementById('advancedPanel');
-const advancedResizeHandle = document.getElementById('advancedResizeHandle');
-const advancedSelectionLabel = document.getElementById('advancedSelectionLabel');
-
-const posXInput = document.getElementById('posXInput');
-const posYInput = document.getElementById('posYInput');
-const posZInput = document.getElementById('posZInput');
-const rotXInput = document.getElementById('rotXInput');
-const rotYInput = document.getElementById('rotYInput');
-const rotZInput = document.getElementById('rotZInput');
-const scaleXInput = document.getElementById('scaleXInput');
-const scaleYInput = document.getElementById('scaleYInput');
-const scaleZInput = document.getElementById('scaleZInput');
-const flipXBtn = document.getElementById('flipXBtn');
-const flipYBtn = document.getElementById('flipYBtn');
-const flipZBtn = document.getElementById('flipZBtn');
-
-const snapCellSizeInput = document.getElementById('snapCellSizeInput');
-const snapTranslateHorizontalInput = document.getElementById('snapTranslateHorizontalInput');
-const snapTranslateVerticalInput = document.getElementById('snapTranslateVerticalInput');
-const snapRotateInput = document.getElementById('snapRotateInput');
-
-const selectModeBtn = document.getElementById('selectModeBtn');
-const moveModeBtn = document.getElementById('moveModeBtn');
-const rotateModeBtn = document.getElementById('rotateModeBtn');
-const scaleModeBtn = document.getElementById('scaleModeBtn');
-const measureModeBtn = document.getElementById('measureModeBtn');
-const measurementReadout = document.getElementById('measurementReadout');
-const flipButtons = [
-  { btn: flipXBtn, axis: 'x' },
-  { btn: flipYBtn, axis: 'y' },
-  { btn: flipZBtn, axis: 'z' }
-].filter(({ btn }) => !!btn);
-
-flipButtons.forEach(({ btn }) => {
-  btn.setAttribute('aria-pressed', 'false');
-});
-
-if (measureModeBtn) {
-  measureModeBtn.setAttribute('aria-pressed', 'false');
-}
-
-if (selectModeBtn) {
-  selectModeBtn.setAttribute('aria-pressed', 'false');
-}
-
-const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
+const {
+  container,
+  sidebar,
+  menuButton,
+  undoButton,
+  helpButton,
+  advancedModeButton,
+  bottomControls,
+  basicControls,
+  advancedControls,
+  gridControls,
+  gridSnapBtn,
+  gridSnapIcon,
+  stackingModeBtn,
+  stackingModeIcon,
+  rotateLeftBtn,
+  rotateRightBtn,
+  rotationModeBtn,
+  rotationModeIcon,
+  helpOverlay,
+  helpCloseBtn,
+  fileInput,
+  importBtn,
+  exportStlBtn,
+  fileNameLabel,
+  partsList,
+  scenePanel,
+  sceneResizeHandle,
+  sceneObjectsList,
+  advancedPanel,
+  advancedResizeHandle,
+  advancedSelectionLabel,
+  posXInput,
+  posYInput,
+  posZInput,
+  rotXInput,
+  rotYInput,
+  rotZInput,
+  scaleXInput,
+  scaleYInput,
+  scaleZInput,
+  flipXBtn,
+  flipYBtn,
+  flipZBtn,
+  snapCellSizeInput,
+  snapTranslateHorizontalInput,
+  snapTranslateVerticalInput,
+  snapRotateInput,
+  selectModeBtn,
+  moveModeBtn,
+  rotateModeBtn,
+  scaleModeBtn,
+  measureModeBtn,
+  measurementReadout,
+  flipButtons,
+  sidebarResizeHandle
+} = createDomRefs();
 
 const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
@@ -106,12 +88,6 @@ let isAdvancedMode = false;
 let isMeasureMode = false;
 let lastTransformMode = 'translate';
 let currentTransformMode = 'translate';
-
-const DEFAULT_GRID_CELL_SIZE = 25; // millimeters per tile
-const BASE_GRID_DIVISIONS = 40;
-const GRID_WORLD_SIZE = DEFAULT_GRID_CELL_SIZE * BASE_GRID_DIVISIONS; // generous play area
-const GRID_MARGIN_CELLS = 2;
-const MIN_GRID_DIVISIONS = BASE_GRID_DIVISIONS;
 
 let currentGridDivisions = BASE_GRID_DIVISIONS;
 let currentGridWorldSize = GRID_WORLD_SIZE;
@@ -205,8 +181,6 @@ const stackingExistingFootprintBounds = new THREE.Box2();
 const stackingNewFootprintBounds = new THREE.Box2();
 const stackingTempBox = new THREE.Box3();
 const stackingSatAxis = new THREE.Vector2();
-const STACKING_CONTACT_EPSILON = 0.01;
-const STACKING_SAT_EPSILON = 1e-6;
 const flipTempPosition = new THREE.Vector3();
 const flipTempQuaternion = new THREE.Quaternion();
 const flipTempScale = new THREE.Vector3();
@@ -561,101 +535,6 @@ function updateGridExtents() {
     refreshGridGeometry();
   }
 }
-
-function _averageNormalOutwardDot(geometry) {
-  const g = geometry;
-  const pos = g.getAttribute('position');
-  if (!pos || pos.itemSize !== 3) return 0; // can't tell
-
-  // Ensure we have normals to evaluate
-  if (!g.getAttribute('normal')) g.computeVertexNormals();
-  const nor = g.getAttribute('normal');
-
-  // Compute centroid in object space
-  const centroid = new THREE.Vector3();
-  const v = new THREE.Vector3();
-  const count = pos.count;
-  for (let i = 0; i < count; i++) {
-    v.fromBufferAttribute(pos, i);
-    centroid.add(v);
-  }
-  centroid.multiplyScalar(1 / Math.max(count, 1));
-
-  // Average dot((p - centroid), normal)
-  let sum = 0;
-  for (let i = 0; i < count; i++) {
-    v.fromBufferAttribute(pos, i).sub(centroid).normalize();
-    const nx = nor.getX(i), ny = nor.getY(i), nz = nor.getZ(i);
-    sum += v.x * nx + v.y * ny + v.z * nz;
-  }
-  return sum / Math.max(count, 1);
-}
-
-/** Flip triangle winding in-place (and fix normals) for a BufferGeometry. */
-function _flipWindingInPlace(geometry) {
-  const g = geometry;
-  // If indexed, swap each triangle's last two indices. If non-indexed, swap
-  // vertex #1 and #2 of every triangle directly in the position (and normal) arrays.
-  if (g.index) {
-    const idx = g.index;
-    for (let i = 0; i < idx.count; i += 3) {
-      const a = idx.getX(i);
-      const b = idx.getX(i + 1);
-      const c = idx.getX(i + 2);
-      idx.setX(i, a);
-      idx.setX(i + 1, c);
-      idx.setX(i + 2, b);
-    }
-    idx.needsUpdate = true;
-  } else {
-    const pos = g.getAttribute('position');
-    const nor = g.getAttribute('normal');
-    const tmp = [0, 0, 0];
-    for (let i = 0; i < pos.count; i += 3) {
-      // swap vertex 1 and 2 positions
-      for (let k = 0; k < 3; k++) tmp[k] = pos.getX(i + 1 + (k === 0 ? 0 : 0));
-      // swap x
-      let x1 = pos.getX(i + 1), y1 = pos.getY(i + 1), z1 = pos.getZ(i + 1);
-      let x2 = pos.getX(i + 2), y2 = pos.getY(i + 2), z2 = pos.getZ(i + 2);
-      pos.setXYZ(i + 1, x2, y2, z2);
-      pos.setXYZ(i + 2, x1, y1, z1);
-
-      if (nor) {
-        x1 = nor.getX(i + 1); y1 = nor.getY(i + 1); z1 = nor.getZ(i + 1);
-        x2 = nor.getX(i + 2); y2 = nor.getY(i + 2); z2 = nor.getZ(i + 2);
-        nor.setXYZ(i + 1, x2, y2, z2);
-        nor.setXYZ(i + 2, x1, y1, z1);
-      }
-    }
-    pos.needsUpdate = true;
-    if (nor) nor.needsUpdate = true;
-  }
-
-  // Recompute normals to ensure unit-length and consistency
-  g.computeVertexNormals();
-  return g;
-}
-
-/** Ensure geometry has outward-facing normals. Returns the same geometry. */
-function fixNormalsForGeometry(geometry) {
-  if (!geometry || !geometry.getAttribute) return geometry;
-
-  // If the geometry has been transformed (applyMatrix4), bounds are stale
-  // until we recompute; also make sure normals exist before testing.
-  if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
-
-  const dot = _averageNormalOutwardDot(geometry);
-  if (dot < 0) {
-    _flipWindingInPlace(geometry);
-  } else {
-    // Even if already outward, ensure normals are up to date & normalized
-    geometry.computeVertexNormals();
-  }
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-  return geometry;
-}
-
 
 function updateGridCellSize(size) {
   if (!(size > 0)) {
