@@ -2727,7 +2727,7 @@ function onCanvasPointerMove(event) {
 function onCanvasContextMenu(event) {
   if (!selectionContextMenu) return;
   event.preventDefault();
-  showSelectionContextMenu(event.clientX, event.clientY);
+  showSelectionContextMenu(event.clientX, event.clientY, event);
 }
 
 renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
@@ -2942,7 +2942,7 @@ function hideSelectionContextMenu() {
   selectionContextMenu.setAttribute('aria-hidden', 'true');
 }
 
-function showSelectionContextMenu(x, y) {
+function showSelectionContextMenu(x, y, triggerEvent) {
   if (!selectionContextMenu) return;
   updateSelectionContextMenuState();
 
@@ -2971,13 +2971,20 @@ function showSelectionContextMenu(x, y) {
   selectionContextMenu.style.visibility = 'visible';
   selectionContextMenu.setAttribute('aria-hidden', 'false');
 
-  const firstEnabledButton = [
-    contextCreateTemplateBtn,
-    contextCopySelectionBtn,
-    contextPasteSelectionBtn,
-    contextDeleteSelectionBtn
-  ].find((btn) => btn && !btn.disabled);
-  firstEnabledButton?.focus();
+  const isPointerInvocation =
+    !!triggerEvent &&
+    ((triggerEvent.button === 2 || triggerEvent.which === 3) ||
+      (typeof triggerEvent.pointerType === 'string' && triggerEvent.pointerType));
+
+  if (!isPointerInvocation) {
+    const firstEnabledButton = [
+      contextCreateTemplateBtn,
+      contextCopySelectionBtn,
+      contextPasteSelectionBtn,
+      contextDeleteSelectionBtn
+    ].find((btn) => btn && !btn.disabled);
+    firstEnabledButton?.focus({ preventScroll: true });
+  }
 }
 
 function getNextTemplateName() {
