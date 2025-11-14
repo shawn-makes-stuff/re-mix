@@ -247,6 +247,8 @@ function toggleSidebar(force) {
     const open = force !== undefined ? force : !sidebar.classList.contains('open');
     sidebar.classList.toggle('open', open);
   }
+
+  updateAxisWidgetPlacement();
 }
 
 menuButton.addEventListener('click', () => toggleSidebar());
@@ -308,6 +310,26 @@ axisRenderer.domElement.classList.add('axis-widget');
 axisRenderer.domElement.style.pointerEvents = 'auto';
 axisRenderer.domElement.style.touchAction = 'none';
 container.appendChild(axisRenderer.domElement);
+
+function isSidebarVisiblyOpen() {
+  if (window.innerWidth > 820) {
+    return sidebar.style.transform !== 'translateX(100%)';
+  }
+
+  return sidebar.classList.contains('open');
+}
+
+function updateAxisWidgetPlacement() {
+  if (!axisRenderer || !axisRenderer.domElement) return;
+
+  const style = axisRenderer.domElement.style;
+  const baseOffset = 16;
+  if (window.innerWidth > 820 && isSidebarVisiblyOpen()) {
+    style.right = `${sidebar.offsetWidth + baseOffset}px`;
+  } else {
+    style.right = `${baseOffset}px`;
+  }
+}
 
 const axisScene = new THREE.Scene();
 const axisCamera = new THREE.PerspectiveCamera(40, 1, 0.1, 10);
@@ -402,7 +424,10 @@ let axisLastPointer = { x: 0, y: 0 };
 function updateAxisWidgetSize() {
   axisRenderer.setPixelRatio(window.devicePixelRatio);
   axisRenderer.setSize(AXIS_WIDGET_SIZE, AXIS_WIDGET_SIZE);
+  updateAxisWidgetPlacement();
 }
+
+updateAxisWidgetPlacement();
 
 function projectAxisPointer(event) {
   const rect = axisRenderer.domElement.getBoundingClientRect();
@@ -3786,12 +3811,14 @@ window.addEventListener('mousemove', (e) => {
   const max = 600;
   newWidth = Math.max(min, Math.min(max, newWidth));
   sidebar.style.width = `${newWidth}px`;
+  updateAxisWidgetPlacement();
 });
 
 window.addEventListener('mouseup', () => {
   if (!isResizingSidebar) return;
   isResizingSidebar = false;
   document.body.style.cursor = '';
+  updateAxisWidgetPlacement();
 });
 
 // Scene panel height (vertical) resize
