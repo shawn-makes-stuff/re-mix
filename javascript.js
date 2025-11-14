@@ -378,6 +378,11 @@ function applyUrlConfiguration() {
 
   let shouldRefreshSnapping = false;
 
+  const advancedModeParam = parseBooleanParam(params.get('advanced_mode'));
+  if (advancedModeParam != null) {
+    setAdvancedMode(advancedModeParam);
+  }
+
   const cellSizeParam = params.get('cell_size');
   if (cellSizeParam != null) {
     const parsed = parseFloat(cellSizeParam);
