@@ -296,6 +296,8 @@ scene.add(selectionTransformAnchor);
 let isTransforming = false;
 let hadTransformDrag = false;   // 👈 did this pointer interaction actually drag the gizmo?
 let pointerDownPos = null;
+const CONTEXT_MENU_DRAG_THRESHOLD_SQ = 6 * 6; // 6px radius tolerance
+let contextMenuPointerInfo = null;
 
 transformControls.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
@@ -2645,9 +2647,26 @@ const mouse = new THREE.Vector2();
 function onCanvasPointerDown(event) {
   // Track start position so we can distinguish click vs drag
   pointerDownPos = { x: event.clientX, y: event.clientY };
+
+  if (event.button === 2) {
+    contextMenuPointerInfo = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false
+    };
+  }
 }
 
 function onCanvasPointerUp(event) {
+  if (
+    contextMenuPointerInfo &&
+    event.button === 2 &&
+    event.pointerId === contextMenuPointerInfo.pointerId
+  ) {
+    contextMenuPointerInfo.released = true;
+  }
+
   if (!pointerDownPos) return;
 
   const dx = event.clientX - pointerDownPos.x;
@@ -2712,6 +2731,18 @@ function onCanvasPointerUp(event) {
 }
 
 function onCanvasPointerMove(event) {
+  if (
+    contextMenuPointerInfo &&
+    event.pointerId === contextMenuPointerInfo.pointerId &&
+    !contextMenuPointerInfo.released
+  ) {
+    const dx = event.clientX - contextMenuPointerInfo.startX;
+    const dy = event.clientY - contextMenuPointerInfo.startY;
+    if (dx * dx + dy * dy > CONTEXT_MENU_DRAG_THRESHOLD_SQ) {
+      contextMenuPointerInfo.moved = true;
+    }
+  }
+
   if (!isMeasureMode) return;
   if (!activeMeasurement || !activeMeasurement.awaitingSecondPoint) return;
   if (event.buttons !== 0) return;
@@ -2727,6 +2758,14 @@ function onCanvasPointerMove(event) {
 function onCanvasContextMenu(event) {
   if (!selectionContextMenu) return;
   event.preventDefault();
+
+  const pointerInfo = contextMenuPointerInfo;
+  contextMenuPointerInfo = null;
+
+  if (pointerInfo?.moved) {
+    return;
+  }
+
   showSelectionContextMenu(event.clientX, event.clientY, event);
 }
 
@@ -2737,6 +2776,12 @@ renderer.domElement.addEventListener('pointerleave', () => {
   if (isMeasureMode) {
     cancelMeasurementPreview();
   }
+  if (contextMenuPointerInfo) {
+    contextMenuPointerInfo.moved = true;
+  }
+});
+renderer.domElement.addEventListener('pointercancel', () => {
+  contextMenuPointerInfo = null;
 });
 renderer.domElement.addEventListener('contextmenu', onCanvasContextMenu);
 
