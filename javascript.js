@@ -2121,13 +2121,18 @@ function updatePartsListUI() {
     categoryCollapseState.set(key, collapsed);
   };
 
-  const initializeCategoryState = (key, body, iconSpan) => {
+  const initializeCategoryState = (key, body, iconSpan, options = {}) => {
+    const { defaultCollapsed = false } = options;
     let collapsed;
     if (categoryCollapseState.has(key)) {
       collapsed = categoryCollapseState.get(key);
+    } else if (defaultCollapsed) {
+      collapsed = true;
+    } else if (!assignedDefaultExpansion) {
+      collapsed = false;
+      assignedDefaultExpansion = true;
     } else {
-      collapsed = assignedDefaultExpansion ? true : false;
-      if (!assignedDefaultExpansion) assignedDefaultExpansion = true;
+      collapsed = true;
     }
     applyCollapsedState(key, body, iconSpan, collapsed);
   };
@@ -2140,7 +2145,22 @@ function updatePartsListUI() {
   };
 
   // named categories
-  for (const [categoryName, indices] of categoryMap.entries()) {
+  const categoryEntries = Array.from(categoryMap.entries());
+  const logoEntries = [];
+  const nonLogoEntries = [];
+
+  for (const entry of categoryEntries) {
+    const [categoryName] = entry;
+    if (typeof categoryName === 'string' && categoryName.trim().toLowerCase() === 'logo') {
+      logoEntries.push(entry);
+    } else {
+      nonLogoEntries.push(entry);
+    }
+  }
+
+  const orderedEntries = [...nonLogoEntries, ...logoEntries];
+
+  for (const [categoryName, indices] of orderedEntries) {
     const catWrapper = document.createElement('div');
     catWrapper.className = 'parts-category';
 
@@ -2173,7 +2193,11 @@ function updatePartsListUI() {
 
     const categoryKey = `category:${categoryName}`;
     activeCategoryKeys.add(categoryKey);
-    initializeCategoryState(categoryKey, body, iconSpan);
+    const isLogoCategory =
+      typeof categoryName === 'string' && categoryName.trim().toLowerCase() === 'logo';
+    initializeCategoryState(categoryKey, body, iconSpan, {
+      defaultCollapsed: isLogoCategory
+    });
 
     const toggleCategory = createToggleHandler(categoryKey, body, iconSpan);
 
