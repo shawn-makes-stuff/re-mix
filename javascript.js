@@ -132,6 +132,7 @@ if (snapCellSizeInput) {
 }
 
 const partLibrary = []; // { name, geometry, category }
+const categoryCollapseState = new Map(); // categoryName -> collapsed bool
 const placedPartsGroup = new THREE.Group();
 const selectedMeshes = new Set();
 const selectionTransformAnchor = new THREE.Object3D();
@@ -2091,6 +2092,7 @@ function updatePartsListUI() {
 
   // flat list if no categories
   if (!hasCategories) {
+    categoryCollapseState.clear();
     partLibrary.forEach((_, idx) => {
       partsList.appendChild(createPartItem(idx));
     });
@@ -2108,6 +2110,34 @@ function updatePartsListUI() {
       categoryMap.get(part.category).push(idx);
     }
   });
+
+  const activeCategoryKeys = new Set();
+  let assignedDefaultExpansion = false;
+
+  const applyCollapsedState = (key, body, iconSpan, collapsed) => {
+    body.classList.toggle('collapsed', collapsed);
+    body.style.display = collapsed ? 'none' : 'block';
+    iconSpan.textContent = collapsed ? 'expand_more' : 'expand_less';
+    categoryCollapseState.set(key, collapsed);
+  };
+
+  const initializeCategoryState = (key, body, iconSpan) => {
+    let collapsed;
+    if (categoryCollapseState.has(key)) {
+      collapsed = categoryCollapseState.get(key);
+    } else {
+      collapsed = assignedDefaultExpansion ? true : false;
+      if (!assignedDefaultExpansion) assignedDefaultExpansion = true;
+    }
+    applyCollapsedState(key, body, iconSpan, collapsed);
+  };
+
+  const createToggleHandler = (key, body, iconSpan) => {
+    return () => {
+      const next = !body.classList.contains('collapsed');
+      applyCollapsedState(key, body, iconSpan, next);
+    };
+  };
 
   // named categories
   for (const [categoryName, indices] of categoryMap.entries()) {
@@ -2141,11 +2171,11 @@ function updatePartsListUI() {
       body.appendChild(createPartItem(idx));
     });
 
-    const toggleCategory = () => {
-      const collapsed = body.classList.toggle('collapsed');
-      body.style.display = collapsed ? 'none' : 'block';
-      iconSpan.textContent = collapsed ? 'expand_more' : 'expand_less';
-    };
+    const categoryKey = `category:${categoryName}`;
+    activeCategoryKeys.add(categoryKey);
+    initializeCategoryState(categoryKey, body, iconSpan);
+
+    const toggleCategory = createToggleHandler(categoryKey, body, iconSpan);
 
     header.addEventListener('click', (e) => {
       if (e.target === toggleBtn || toggleBtn.contains(e.target)) return;
@@ -2192,11 +2222,11 @@ function updatePartsListUI() {
       body.appendChild(createPartItem(idx));
     });
 
-    const toggleCategory = () => {
-      const collapsed = body.classList.toggle('collapsed');
-      body.style.display = collapsed ? 'none' : 'block';
-      iconSpan.textContent = collapsed ? 'expand_more' : 'expand_less';
-    };
+    const categoryKey = 'uncategorized';
+    activeCategoryKeys.add(categoryKey);
+    initializeCategoryState(categoryKey, body, iconSpan);
+
+    const toggleCategory = createToggleHandler(categoryKey, body, iconSpan);
 
     header.addEventListener('click', (e) => {
       if (e.target === toggleBtn || toggleBtn.contains(e.target)) return;
@@ -2209,6 +2239,12 @@ function updatePartsListUI() {
     });
 
     partsList.appendChild(catWrapper);
+  }
+
+  for (const key of Array.from(categoryCollapseState.keys())) {
+    if (!activeCategoryKeys.has(key)) {
+      categoryCollapseState.delete(key);
+    }
   }
 }
 
