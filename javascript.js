@@ -133,6 +133,9 @@ if (snapCellSizeInput) {
 
 const partLibrary = []; // { name, geometry, category }
 const categoryCollapseState = new Map(); // categoryName -> collapsed bool
+const userManagedCategoryKeys = new Set();
+let hasRenderedPartsList = false;
+let lastAutoExpandedLogoKey = null;
 const placedPartsGroup = new THREE.Group();
 const selectedMeshes = new Set();
 const selectionTransformAnchor = new THREE.Object3D();
@@ -2038,7 +2041,20 @@ function updatePartsListUI() {
     empty.style.marginTop = '4px';
     empty.textContent = 'No parts loaded.';
     partsList.appendChild(empty);
+    categoryCollapseState.clear();
+    userManagedCategoryKeys.clear();
+    lastAutoExpandedLogoKey = null;
+    hasRenderedPartsList = false;
     return;
+  }
+
+  if (
+    hasRenderedPartsList &&
+    lastAutoExpandedLogoKey &&
+    !userManagedCategoryKeys.has(lastAutoExpandedLogoKey)
+  ) {
+    categoryCollapseState.set(lastAutoExpandedLogoKey, true);
+    lastAutoExpandedLogoKey = null;
   }
 
   const createPartItem = (idx) => {
@@ -2093,6 +2109,9 @@ function updatePartsListUI() {
   // flat list if no categories
   if (!hasCategories) {
     categoryCollapseState.clear();
+    userManagedCategoryKeys.clear();
+    lastAutoExpandedLogoKey = null;
+    hasRenderedPartsList = true;
     partLibrary.forEach((_, idx) => {
       partsList.appendChild(createPartItem(idx));
     });
@@ -2122,10 +2141,16 @@ function updatePartsListUI() {
   };
 
   const initializeCategoryState = (key, body, iconSpan, options = {}) => {
-    const { defaultCollapsed = false } = options;
+    const { defaultCollapsed = false, isLogoCategory = false } = options;
     let collapsed;
     if (categoryCollapseState.has(key)) {
       collapsed = categoryCollapseState.get(key);
+      if (!collapsed && !assignedDefaultExpansion) {
+        assignedDefaultExpansion = true;
+      }
+    } else if (isLogoCategory && !hasRenderedPartsList && lastAutoExpandedLogoKey === null) {
+      collapsed = false;
+      lastAutoExpandedLogoKey = key;
     } else if (defaultCollapsed) {
       collapsed = true;
     } else if (!assignedDefaultExpansion) {
@@ -2141,6 +2166,10 @@ function updatePartsListUI() {
     return () => {
       const next = !body.classList.contains('collapsed');
       applyCollapsedState(key, body, iconSpan, next);
+      userManagedCategoryKeys.add(key);
+      if (lastAutoExpandedLogoKey === key) {
+        lastAutoExpandedLogoKey = null;
+      }
     };
   };
 
@@ -2196,7 +2225,8 @@ function updatePartsListUI() {
     const isLogoCategory =
       typeof categoryName === 'string' && categoryName.trim().toLowerCase() === 'logo';
     initializeCategoryState(categoryKey, body, iconSpan, {
-      defaultCollapsed: isLogoCategory
+      defaultCollapsed: isLogoCategory,
+      isLogoCategory
     });
 
     const toggleCategory = createToggleHandler(categoryKey, body, iconSpan);
@@ -2268,8 +2298,14 @@ function updatePartsListUI() {
   for (const key of Array.from(categoryCollapseState.keys())) {
     if (!activeCategoryKeys.has(key)) {
       categoryCollapseState.delete(key);
+      userManagedCategoryKeys.delete(key);
+      if (lastAutoExpandedLogoKey === key) {
+        lastAutoExpandedLogoKey = null;
+      }
     }
   }
+
+  hasRenderedPartsList = true;
 }
 
 function renderPartPreview(geometry, canvas) {
